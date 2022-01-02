@@ -96,5 +96,5 @@ dstore_vals.flush()
 print('Finished saving vectors.')
 
 if args.save_kv_pairs:
-    with open('datastore/kv_pairs.p', 'wb+') as f:
+    with open(f'datastore/{args.data_type}_kv_pairs.p', 'wb+') as f:
         pickle.dump(kv_pairs, f)
