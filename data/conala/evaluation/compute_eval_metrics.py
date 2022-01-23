@@ -10,7 +10,7 @@ import os
 import pickle
 import numpy as np
 
-from compute_bleu import compute_bleu
+from .compute_bleu import compute_bleu
 
 def is_equal(translation_token, tokenized_source):
     if (len(tokenized_source)-1) <= len(translation_token):

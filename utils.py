@@ -9,7 +9,6 @@ import torch.nn.functional as F
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from babel.numbers import parse_decimal, NumberFormatError
-from dataset_preprocessing.wikisql.lib.query import Query
 import re
 import unicodedata
 from knn import log_softmax
@@ -171,23 +170,10 @@ def get_args(parser):
     
     return args
 
-
-def preprocess_batch(data):
-    data_intents = [d['intent'] for d in data]
-    data_snippets = [d['snippet'] for d in data]
-    keys = ['input_ids', 'attention_mask', 'token_type_ids']
-    source_dict = {key: pad_sequence([torch.tensor(d[key]) for d in data_intents], batch_first=True, padding_value=0)
-                              for key in keys}
-    target_dict = {key: pad_sequence([torch.tensor(d[key]) for d in data_snippets], batch_first=True, padding_value=0)
-                                for key in keys}
-    return {'source': source_dict, 'target': target_dict}
-
-
 def strip_accents(text):
     return ''.join(char for char in
                    unicodedata.normalize('NFKD', text)
                    if unicodedata.category(char) != 'Mn')
-
 
 def my_annotate(sentence):
     gloss = []
@@ -422,21 +408,3 @@ def my_detokenize(tokens, token_dict, raise_error=False):
         val = ''.join(literal).strip()
     return val
 
-
-def detokenize_query(query, tokenized_question, table_header_type):
-    detokenized_conds = []
-    for i, (col, op, val) in enumerate(query.conditions):
-        val_tokens = val.split(' ')
-        detokenized_cond_val = my_detokenize(val_tokens, tokenized_question)
-
-        if table_header_type[col] == 'real' and not isinstance(detokenized_cond_val, (int, float)):
-            if ',' not in detokenized_cond_val:
-                try:
-                    detokenized_cond_val = float(parse_decimal(detokenized_cond_val))
-                except NumberFormatError as e:
-                    try:
-                        detokenized_cond_val = float(num_re.findall(detokenized_cond_val)[0])
-                    except: pass
-        detokenized_conds.append((col, op, detokenized_cond_val))
-    detokenized_query = Query(sel_index=query.sel_index, agg_index=query.agg_index, conditions=detokenized_conds)
-    return detokenized_query

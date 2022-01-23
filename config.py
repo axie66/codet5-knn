@@ -6,26 +6,28 @@ import torch
 
 def add_args(parser):
     parser.add_argument("--task", type=str, required=True,
-                        choices=['summarize', 'concode', 'translate', 'refine', 'defect', 'clone'])
+                        choices=['summarize', 'concode', 'translate', 'refine', 'defect', 'clone', 'conala'])
     parser.add_argument("--sub_task", type=str, default='')
     parser.add_argument("--lang", type=str, default='')
     parser.add_argument("--eval_task", type=str, default='')
     parser.add_argument("--model_type", default="codet5", type=str, choices=['roberta', 'bart', 'codet5'])
-    parser.add_argument("--add_lang_ids", action='store_true')
     parser.add_argument("--data_num", default=-1, type=int)
+    
+    parser.add_argument("--add_lang_ids", action='store_true')
+    parser.add_argument("--add_task_prefix", action='store_true', help="Whether to add task prefix for t5 and codet5")
+    
     parser.add_argument("--start_epoch", default=0, type=int)
     parser.add_argument("--num_train_epochs", default=100, type=int)
     parser.add_argument("--patience", default=5, type=int)
+
     # parser.add_argument("--tokenizer_path", type=str, required=True)
     parser.add_argument("--cache_path", type=str, required=True)
     parser.add_argument("--summary_dir", type=str, required=True)
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--res_dir", type=str, required=True)
     parser.add_argument("--res_fn", type=str, default='')
-    parser.add_argument("--add_task_prefix", action='store_true', help="Whether to add task prefix for t5 and codet5")
     parser.add_argument("--save_last_checkpoints", action='store_true')
     parser.add_argument("--always_save_model", action='store_true')
-    parser.add_argument("--do_eval_bleu", action='store_true', help="Whether to evaluate bleu on dev set.")
 
     ## Required parameters
     parser.add_argument("--model_name_or_path", default="roberta-base", type=str,
@@ -57,6 +59,8 @@ def add_args(parser):
                         help="Whether to run eval on the train set.")
     parser.add_argument("--do_eval", action='store_true',
                         help="Whether to run eval on the dev set.")
+    parser.add_argument("--do_eval_bleu", action='store_true', 
+                        help="Whether to evaluate bleu on dev set.")
     parser.add_argument("--do_test", action='store_true',
                         help="Whether to run eval on the dev set.")
     parser.add_argument("--do_lower_case", action='store_true',

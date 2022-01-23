@@ -1,0 +1,16 @@
+python3 -i train_conala.py \
+    --task conala \
+    --lang python \
+    --cache_path data/concode \
+    --summary_dir checkpoint/summary \
+    --res_dir checkpoint/result \
+    --output_dir checkpoint/output \
+    --do_train \
+    --do_test \
+    --do_eval \
+    --num_train_epochs 10 \
+    --batch_size 16 \
+    --learning_rate 1e-5 \
+    --beam_size 10 \
+    --weight_decay 1e-5 \
+    --wandb

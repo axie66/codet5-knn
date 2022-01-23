@@ -111,7 +111,7 @@ class Conala(MonolingualPython):
         return intent, slot_map
 
     @staticmethod
-    def preprocess_example(example_json):
+    def preprocess_example(example_json, add_lang_ids=False, add_task_prefix=False):
         intent = example_json['intent']
         if 'rewritten_intent' in example_json:
             rewritten_intent = example_json['rewritten_intent']
@@ -121,6 +121,10 @@ class Conala(MonolingualPython):
         if rewritten_intent is None:
             rewritten_intent = intent
         rewritten_intent = rewritten_intent.lower().strip()
+        if add_task_prefix:
+            rewritten_intent = 'conala: ' + rewritten_intent
+        if add_lang_ids:
+            rewritten_intent = '<python> ' + rewritten_intent
         snippet = example_json['snippet'].lower().strip()
 
         canonical_intent, slot_map = Conala.canonicalize_intent(rewritten_intent)

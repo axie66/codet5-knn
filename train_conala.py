@@ -13,7 +13,7 @@ from data.conala.evaluation.compute_eval_metrics import compute_metric
 from dataset import get_elapse_time, load_conala_dataset, preprocess_batch_conala
 from config import add_args, add_knn_args, parse_args, set_seed
 
-from model import T5KNN
+from model import T5KNN, T5ForConditionalGeneration
 from transformers import RobertaTokenizer, AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
@@ -125,16 +125,21 @@ def main():
 
     set_seed(args)
     tokenizer = RobertaTokenizer.from_pretrained('Salesforce/codet5-base')
-    model = T5KNN.from_pretrained('Salesforce/codet5-base')
+    if getattr(args, 'k', None):
+        model_class = T5KNN
+    else:
+        model_class = T5ForConditionalGeneration
+    model = model_class.from_pretrained('Salesforce/codet5-base')
     if os.path.isfile(args.model_name_or_path):
         model.load_state_dict(torch.load(args.model_name_or_path))
     model.to(device)
 
     fa = open(os.path.join(args.output_dir, 'summary.log'), 'a+')
 
+    if args.wandb:
+        wandb.init('knn-code-gen', config=vars(args))
+
     if args.do_train:
-        if args.wandb:
-            wandb.init('codet5-knn', config=vars(args))
 
         # Prepare data loaders
         train_data, valid_data, test_data = load_conala_dataset(args, model.tokenizer)

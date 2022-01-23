@@ -4,4 +4,4 @@ python3 store_embeds.py --pretrained_path pretrained_weights/conala_model_combin
 
 python3 build_dstore.py --dstore_mmap datastore/train --dstore_size 50044 --dimension 768 --faiss_index datastore/train_knn.index --num_keys_to_add_at_a_time 500000 --starting_point 0 --dstore_fp16
 
-ython3 build_dstore.py --dstore_mmap datastore/mined --dstore_size 2090745 --dimension 768 --faiss_index datastore/mined_knn.index --num_keys_to_add_at_a_time 500000 --starting_point 0 --dstore_fp16
+python3 build_dstore.py --dstore_mmap datastore/mined --dstore_size 2090745 --dimension 768 --faiss_index datastore/mined_knn.index --num_keys_to_add_at_a_time 500000 --starting_point 0 --dstore_fp16

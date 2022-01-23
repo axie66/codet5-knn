@@ -27,7 +27,7 @@ if __name__ == '__main__':
 
     out = model(input_ids=x, labels=y, ret_decoder_ffn_inp=True)
 
-    out = model.generate(
-        input_ids=x,
-        attention_mask=
-    )
+    # out = model.generate(
+    #     input_ids=x,
+    #     attention_mask=
+    # )
