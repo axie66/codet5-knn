@@ -13,7 +13,7 @@ if __name__ == '__main__':
 
     tokenizer = RobertaTokenizer.from_pretrained('Salesforce/codet5-base')
 
-    _, train_data = load_and_cache_gen_data(args, args.train_filename, tokenizer, 'train')
+    _, train_data = load_and_cache_gen_data(args, args.test_filename, tokenizer, 'test')
 
     train_loader = data.DataLoader(train_data, batch_size=args.batch_size, collate_fn=collate_fn)
 
@@ -26,3 +26,8 @@ if __name__ == '__main__':
     y = torch.tensor(y).unsqueeze(0)
 
     out = model(input_ids=x, labels=y, ret_decoder_ffn_inp=True)
+
+    out = model.generate(
+        input_ids=x,
+        attention_mask=
+    )

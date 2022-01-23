@@ -1,0 +1,13 @@
+python3 -i train.py \
+    --task concode \
+    --data_dir data/concode/dataset/concode \
+    --cache_path data/concode \
+    --summary_dir checkpoint/summary \
+    --res_dir checkpoint/result \
+    --output_dir checkpoint/output \
+    --add_task_prefix \
+    --do_train \
+    --do_test \
+    --do_eval \
+    --batch_size 16 \
+    --

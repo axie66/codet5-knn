@@ -1,12 +1,14 @@
 import os
 from tqdm import tqdm
 import json
+import time
 import random
 import logging
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from torch.nn.utils.rnn import pad_sequence
+from data.conala.conala import Conala
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -139,7 +141,7 @@ def convert_examples_to_features(item):
         url=example.url
     )
 
-def load_and_cache_gen_data(args, filename, tokenizer, split_tag, only_src=False, is_sample=False):
+def load_and_cache_concode_data(args, filename, tokenizer, split_tag, only_src=False, is_sample=False):
     # cache the data into args.cache_path except it is sampled
     # only_src: control whether to return only source ids for bleu evaluating (dev/test)
     # return: examples (Example object), data (TensorDataset)
@@ -176,7 +178,7 @@ def load_and_cache_gen_data(args, filename, tokenizer, split_tag, only_src=False
             torch.save(data, cache_fn)
     return examples, data
 
-def calc_stats(examples, tokenizer=None, is_tokenize=False):
+def calc_stats(examples, tokenizer=None, is_tokenize=False, plot=True):
     avg_src_len = []
     avg_trg_len = []
     avg_src_len_tokenize = []
@@ -200,18 +202,47 @@ def calc_stats(examples, tokenizer=None, is_tokenize=False):
         logger.info("Read %d examples, avg src len: %d, avg trg len: %d, max src len: %d, max trg len: %d",
                     len(examples), np.mean(avg_src_len), np.mean(avg_trg_len), max(avg_src_len), max(avg_trg_len))
 
-    fig, ax = plt.subplots(2, 2)
-    ax[0, 0].hist(avg_src_len)
-    ax[0, 0].set_title('Source Lengths')
+    if plot:
+        fig, ax = plt.subplots(2, 2)
+        ax[0, 0].hist(avg_src_len)
+        ax[0, 0].set_title('Source Lengths')
 
-    ax[0, 1].hist(avg_trg_len)
-    ax[0, 1].set_title('Target Lengths')
+        ax[0, 1].hist(avg_trg_len)
+        ax[0, 1].set_title('Target Lengths')
 
-    ax[1, 0].hist(avg_src_len_tokenize)
-    ax[1, 0].set_title('Tokenized Source Lengths')
+        ax[1, 0].hist(avg_src_len_tokenize)
+        ax[1, 0].set_title('Tokenized Source Lengths')
 
-    ax[1, 1].hist(avg_trg_len_tokenize)
-    ax[1, 1].set_title('Tokenized Target Lengths')
-    plt.show()
+        ax[1, 1].hist(avg_trg_len_tokenize)
+        ax[1, 1].set_title('Tokenized Target Lengths')
+        plt.show()
     
     return avg_src_len, avg_trg_len, avg_src_len_tokenize, avg_trg_len_tokenize
+
+def get_elapse_time(t0):
+    elapse_time = time.time() - t0
+    if elapse_time > 3600:
+        hour = int(elapse_time // 3600)
+        minute = int((elapse_time % 3600) // 60)
+        return "{}h{}m".format(hour, minute)
+    else:
+        minute = int((elapse_time % 3600) // 60)
+        return "{}m".format(minute)
+
+def load_conala_dataset(args, tokenizer):
+    splits = ['train', 'dev', 'test']
+    datasets = []
+    for split in splits:
+        dataset = Conala('conala', split, tokenizer, args)
+        datasets.append(dataset)
+    return (*datasets,) if len(datasets) > 1 else dataset
+
+def preprocess_batch_conala(data):
+    data_intents = [d['intent'] for d in data]
+    data_snippets = [d['snippet'] for d in data]
+    keys = ['input_ids', 'attention_mask',] #'token_type_ids']
+    source_dict = {key: pad_sequence([torch.tensor(d[key]) for d in data_intents], batch_first=True, padding_value=0)
+                              for key in keys}
+    target_dict = {key: pad_sequence([torch.tensor(d[key]) for d in data_snippets], batch_first=True, padding_value=0)
+                                for key in keys}
+    return {'source': source_dict, 'target': target_dict}

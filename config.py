@@ -1,5 +1,8 @@
 import os
 import multiprocessing
+import random
+import numpy as np
+import torch
 
 def add_args(parser):
     parser.add_argument("--task", type=str, required=True,
@@ -61,7 +64,7 @@ def add_args(parser):
     parser.add_argument("--no_cuda", action='store_true',
                         help="Avoid using CUDA when available")
 
-    parser.add_argument("--batch_size", default=8, type=int,
+    parser.add_argument("--batch_size", default=16, type=int,
                         help="Batch size per GPU/CPU.")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
@@ -91,7 +94,55 @@ def add_args(parser):
     parser.add_argument('--seed', type=int, default=1234,
                         help="random seed for initialization")
 
+    parser.add_argument('--wandb', action='store_true', 
+                        help='log to wandb')
+
     parser.add_argument('--calc_stats', action='store_true')
+    return parser
+
+
+def add_knn_args(parser):
+    parser.add_argument('--dstore-fp16', default=False, action='store_true',
+                        help='if true, datastore items are saved in fp16 and int32')
+
+    # KNN Hyperparameters
+    parser.add_argument('--k', default=1024, type=int, 
+                        help='number of nearest neighbors to retrieve')
+    parser.add_argument('--probe', default=8, type=int,
+                            help='for FAISS, the number of lists to query')
+    parser.add_argument('--lmbda', default=0.0, type=float,
+                        help='controls interpolation with knn, 0.0 = no knn')
+    parser.add_argument('--knn_temp', default=1.0, type=float,
+                        help='temperature for knn distribution')
+    parser.add_argument('--knn-sim-func', default=None, type=str, # don't actually need this one
+                        help='similarity function to use for knns')
+    parser.add_argument('--use-faiss-only', action='store_true', default=False,
+                        help='do not look up the keys/values from a separate array')
+    parser.add_argument('--faiss_metric_type', type=str, default='l2',
+                        help='distance metric for faiss')
+
+    # Datastore related stuff
+    parser.add_argument('--dstore-size', type=int,
+                        help='number of items in the knn datastore')
+    parser.add_argument('--dstore-filename', type=str, default=None,
+                        help='File where the knn datastore is saved')
+    parser.add_argument('--indexfile', type=str, default=None,
+                        help='File containing the index built using faiss for knn')
+    parser.add_argument('--knn_embed_dim', type=int, default=768,
+                        help='dimension of keys in knn datastore')
+    parser.add_argument('--no-load-keys', default=False, action='store_true',
+                        help='do not load keys')
+    parser.add_argument('--knn-q2gpu', action='store_true', default=False,
+                        help='move the quantizer from faiss to gpu')
+    
+    # probably shouldn't use this flag (except for small datastores)
+    parser.add_argument('--move-dstore-to-mem', default=False, action='store_true', 
+                        help='move the keys and values for knn to memory')
+    return parser
+
+
+def add_conala_args(parser):
+    parser.add_argument('--mono-min-prob', type=float, default=.1)
     return parser
 
 def parse_args(parser):
@@ -101,6 +152,8 @@ def parse_args(parser):
         args.lang = args.sub_task
     elif args.task in ['refine', 'concode', 'clone']:
         args.lang = 'java'
+    elif args.task == 'conala':
+        args.lang = 'python'
     elif args.task == 'defect':
         args.lang = 'c'
     elif args.task == 'translate':
@@ -117,3 +170,11 @@ def parse_args(parser):
             os.makedirs(dir_path)
 
     return args
+
+def set_seed(args):
+    """set random seed."""
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if args.n_gpu > 0:
+        torch.cuda.manual_seed_all(args.seed)
