@@ -98,10 +98,7 @@ def compute_bleu(translation_corpus, dataset_object, section, args, max_order=4,
 
     for index in section:
         translation = translation_corpus[index]
-        if args.translate_backward:
-            reference = ' '.join(dataset_object[index]['intent']['words'])
-        else:
-            reference = dataset_object[index]['snippet']
+        reference = dataset_object[index]['snippet']
 
         # if args.python is True and args.translate_backward is False:
         slot_map = dataset_object[index]['slot_map']

@@ -143,7 +143,9 @@ class Conala(MonolingualPython):
         examples = []
         for i, example_json in enumerate(dataset):
             try:
-                example_dict = Conala.preprocess_example(example_json)
+                example_dict = Conala.preprocess_example(example_json, 
+                    add_lang_ids=self.args.add_lang_ids,
+                    add_task_prefix=self.args.add_task_prefix)
             except (AssertionError, SyntaxError, ValueError, OverflowError) as e:
                 continue
             examples.append(example_dict)

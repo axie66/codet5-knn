@@ -13,6 +13,7 @@ except:
     warnings.warn('Unable to import faiss.')
 import numpy as np
 import time
+from torch_scatter import scatter
 
 
 def log_softmax(x, dim: int, onnx_trace: bool = False):
@@ -22,7 +23,7 @@ def log_softmax(x, dim: int, onnx_trace: bool = False):
         return F.log_softmax(x, dim=dim, dtype=torch.float32)
 
 class KNN_Dstore(object):
-    def __init__(self, args):
+    def __init__(self, args, vocab_size, pad_idx):
         self.half = args.fp16
         if hasattr(args, "decoder_embed_dim"):
             self.dimension = args.decoder_embed_dim
@@ -37,6 +38,9 @@ class KNN_Dstore(object):
         self.index = self.setup_faiss(args)
         self.lmbda = args.lmbda
         self.knn_temp = args.knn_temp
+
+        self.vocab_size = vocab_size
+        self.pad_idx = pad_idx
 
         kv_pairs_path = args.dstore_filename + '_kv_pairs.p'
         if os.path.isfile(kv_pairs_path):
@@ -151,16 +155,27 @@ class KNN_Dstore(object):
         # TxBx1
         return full_yhat_knn_prob.view(qshape[0], qshape[1], 1)
 
-    def get_knn_scores_per_step(self, queries, vocab_size, pad_idx, use_dtype=torch.float32, save_knns=False):#, knn_temp=1.0):
+    def retrieve(self, queries):
+        # queries are [batch, seq_len, hidden]
+        batch, seq_len = queries.shape[:2]
+        dists, knns = self.get_knns(queries.contiguous().view(-1, queries.size(-1)))  # [Batch * seq len, K]
+
+        nn_vals = self.vals[knns].to(queries.device).squeeze(-1)  # [Batch size * Seq len, K]
+        nn_vals = nn_vals.view(batch, seq_len, -1)  # [B, S, K]
+        nn_keys = self.keys[knns].to(queries.device) # [B, S, K, H]
+
+        dists = dists.view(batch, seq_len, -1)  # [B, S, K]
+        knns = knns.view(batch, seq_len, -1)  # [B, S, K]
+        return dists, knns, nn_vals, nn_keys
+
+    def get_knn_scores_per_step(self, queries, use_dtype=torch.float32, save_knns=False):#, knn_temp=1.0):
         qshape = queries.shape
         queries = queries.view(-1, qshape[-1])
         dists, knns = self.get_knns(queries)
-        # (Bxbeam_size)xK
+        # (B x beam_size) x K
         dists = torch.from_numpy(dists).type(dtype=use_dtype).cuda()
-        # TODO(urvashik): update to use full precision keys
-        dists = -1 * dists # negative dists
-        # dists = self.dist_func(dists, knns, queries, function=self.sim_func)
-        dists.div_(self.knn_temp)
+        dists = -1 * dists / self.knn_temp # negative dists
+
         probs = log_softmax(dists, dim=-1).type(dtype=use_dtype)
 
         # (Bxbeam_size)xK
@@ -176,7 +191,7 @@ class KNN_Dstore(object):
         knn_scores_by_index = torch.ones([indices.shape[0], indices.shape[1], len(unique_indices)], dtype=use_dtype).cuda()
         knn_scores_by_index[:] = -10000 #-math.inf
         knn_vals_by_index = torch.ones([indices.shape[0], indices.shape[1], len(unique_indices)]).long().cuda()
-        knn_vals_by_index[:] = pad_idx
+        knn_vals_by_index[:] = self.pad_idx
 
         # (Bxbeam)x1xK
         indices = indices.unsqueeze(2)
@@ -187,7 +202,7 @@ class KNN_Dstore(object):
         # (Bxbeam)xn
         knn_scores_by_index = knn_scores_by_index.logsumexp(dim=1)
         knn_vals_by_index = knn_vals_by_index.max(dim=1)[0]
-        full_knn_scores = torch.ones([queries.shape[0], vocab_size], dtype=use_dtype).cuda()
+        full_knn_scores = torch.ones([queries.shape[0], self.vocab_size], dtype=use_dtype).cuda()
         full_knn_scores[:] = -10000 #-math.inf
         full_knn_scores.scatter_(dim=1, index=knn_vals_by_index, src=knn_scores_by_index)
         ## TRYING SOMETHING OUT
@@ -196,3 +211,29 @@ class KNN_Dstore(object):
             return full_knn_scores, (torch.from_numpy(knns).long().cuda(), probs.squeeze(-1), indices.squeeze(-1))
 
         return full_knn_scores
+
+    def calculate_select_knn_prob(self,
+        distance: torch.Tensor,              # [B, S, K]
+        tgt_index: torch.Tensor,             # [B, S, K]
+        knn_select_prob: torch.Tensor = None # [B, S, K]
+    ):
+        '''
+        Taken with slight modification from Adaptive kNN-MT
+        https://github.com/zhengxxn/adaptive-knn-mt/blob/main/fairseq/modules/knn_datastore.py
+        '''
+        scaled_dists = -distance / self.knn_temp
+
+        knn_weight = torch.softmax(scaled_dists, dim=-1)  # [B, S, K]
+        weight_sum_knn_weight = knn_weight * knn_select_prob
+
+        return self.scatter_knn_scores(weight_sum_knn_weight, tgt_index)
+
+    def scatter_knn_scores(self, knn_scores, tgt_index):
+        B, S, K = knn_scores.shape
+        knn_tgt_prob = torch.zeros(B, S, K, self.vocab_size).to(knn_scores)  # [B, S, K, Vocab Size]
+        tgt_index = tgt_index.unsqueeze_(-1)  # [B, S, K, 1]
+
+        scatter(src=knn_scores.float(), out=knn_tgt_prob, index=tgt_index, dim=-1)
+
+        prob = knn_tgt_prob.sum(dim=-2)  # [Batch Size, seq len, vocab size]
+        return prob

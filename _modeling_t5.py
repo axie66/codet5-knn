@@ -958,7 +958,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
                 return_dict=return_dict,
                 ret_ffn_inp=ret_encoder_ffn_inp,
             )
-        elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
+        elif return_dict and not isinstance(encoder_outputs, (BaseModelOutput, BaseModelOutputWithPastAndCrossAttentions)):
             encoder_outputs = BaseModelOutput(
                 last_hidden_state=encoder_outputs[0],
                 hidden_states=encoder_outputs[1] if len(encoder_outputs) > 1 else None,

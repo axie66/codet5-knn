@@ -95,11 +95,13 @@ def add_args(parser):
                         help="Linear warmup over warmup_steps.")
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="For distributed training: local_rank")
-    parser.add_argument('--seed', type=int, default=1234,
+    parser.add_argument('--seed', type=int, default=None,
                         help="random seed for initialization")
 
     parser.add_argument('--wandb', action='store_true', 
                         help='log to wandb')
+
+    parser.add_argument('--fp16', action='store_true', help='use FP16')
 
     parser.add_argument('--calc_stats', action='store_true')
     return parser
@@ -152,6 +154,9 @@ def add_conala_args(parser):
 def parse_args(parser):
     args = parser.parse_args()
 
+    if args.seed is None:
+        args.seed = random.randint(0, 2**15-1)
+
     if args.task in ['summarize']:
         args.lang = args.sub_task
     elif args.task in ['refine', 'concode', 'clone']:
@@ -180,5 +185,3 @@ def set_seed(args):
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    if args.n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)

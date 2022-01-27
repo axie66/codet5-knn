@@ -9,12 +9,12 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from dataset import load_and_cache_concode_data, get_elapse_time
+from dataset import load_and_cache_concode_data, get_elapse_time, preprocess_batch_concode
 from config import add_args, add_knn_args, parse_args, set_seed
 from evaluator import smooth_bleu
 from evaluator.CodeBLEU import calc_code_bleu
 from evaluator.bleu import _bleu
-from model import T5KNN
+from model import T5KNN, T5ForConditionalGeneration
 from transformers import RobertaTokenizer, AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
@@ -27,17 +27,17 @@ except ImportError:
     logger.warn('Unable to import wandb')
 
 def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
-    eval_dataloader = DataLoader(eval_data, shuffle=False, batch_size=args.eval_batch_size,
-                                 num_workers=4 if cuda else 0)
+    eval_dataloader = DataLoader(eval_data, shuffle=False, batch_size=args.batch_size,
+                                 num_workers=4 if cuda else 0, collate_fn=preprocess_batch_concode)
     # Start evaluating model
     logger.info("  " + "***** Running ppl evaluation *****")
     logger.info("  Num examples = %d", len(eval_examples))
-    logger.info("  Batch size = %d", args.eval_batch_size)
+    logger.info("  Batch size = %d", args.batch_size)
 
     model.eval()
     eval_loss, batch_num = 0, 0
     for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval ppl"):
-        batch = tuple(t.to(args.device) for t in batch)
+        batch = tuple(t.to(device) for t in batch)
         source_ids, target_ids = batch
         source_mask = source_ids.ne(tokenizer.pad_token_id)
         target_mask = target_ids.ne(tokenizer.pad_token_id)
@@ -61,15 +61,15 @@ def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
 def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag, criteria):
     logger.info("  ***** Running bleu evaluation on {} data*****".format(split_tag))
     logger.info("  Num examples = %d", len(eval_examples))
-    logger.info("  Batch size = %d", args.eval_batch_size)
-    eval_dataloader = DataLoader(eval_data, suhffle=False, batch_size=args.eval_batch_size,
-                                 num_workers=4 if cuda else 0)
+    logger.info("  Batch size = %d", args.batch_size)
+    eval_dataloader = DataLoader(eval_data, shuffle=False, batch_size=args.batch_size,
+                                 num_workers=4 if cuda else 0, collate_fn=preprocess_batch_concode)
 
     model.eval()
     pred_ids = []
     bleu, codebleu = 0.0, 0.0
     for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval bleu for {} set".format(split_tag)):
-        source_ids = batch[0].to(args.device)
+        source_ids = batch[0].to(device)
         source_mask = source_ids.ne(tokenizer.pad_token_id)
         with torch.no_grad():
             if args.model_type == 'roberta':
@@ -146,7 +146,7 @@ def main():
 
     set_seed(args)
     tokenizer = RobertaTokenizer.from_pretrained('Salesforce/codet5-base')
-    model = T5KNN.from_pretrained('Salesforce/codet5-base')
+    model = T5ForConditionalGeneration.from_pretrained('Salesforce/codet5-base')
     if os.path.isfile(args.model_name_or_path):
         model.load_state_dict(torch.load(args.model_name_or_path))
     model.to(device)
@@ -159,8 +159,8 @@ def main():
 
         # Prepare training data loader
         train_examples, train_data = load_and_cache_concode_data(args, args.train_filename, tokenizer, 'train')
-        train_dataloader = DataLoader(train_data, shuffle=True, batch_size=args.train_batch_size,
-                                      num_workers=4 if cuda else 0)
+        train_dataloader = DataLoader(train_data, shuffle=True, batch_size=args.batch_size,
+                                      num_workers=4 if cuda else 0, collate_fn=preprocess_batch_concode)
 
         # Prepare optimizer and schedule (linear warmup and decay)
         no_decay = ['bias', 'LayerNorm.weight']
@@ -179,8 +179,8 @@ def main():
         train_example_num = len(train_data)
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", train_example_num)
-        logger.info("  Batch size = %d", args.train_batch_size)
-        logger.info("  Batch num = %d", math.ceil(train_example_num / args.train_batch_size))
+        logger.info("  Batch size = %d", args.batch_size)
+        logger.info("  Batch num = %d", math.ceil(train_example_num / args.batch_size))
         logger.info("  Num epoch = %d", args.num_train_epochs)
 
         dev_dataset = {}
@@ -195,7 +195,7 @@ def main():
             epoch_stats = {}
 
             for step, batch in enumerate(bar):
-                batch = tuple(t.to(args.device) for t in batch)
+                batch = tuple(t.to(device) for t in batch)
                 source_ids, target_ids = batch
                 source_mask = source_ids.ne(tokenizer.pad_token_id)
                 target_mask = target_ids.ne(tokenizer.pad_token_id)
@@ -208,8 +208,8 @@ def main():
                                     labels=target_ids, decoder_attention_mask=target_mask)
                     loss = outputs.loss
 
-                if args.n_gpu > 1:
-                    loss = loss.mean()  # mean() to average on multi-gpu.
+                # if args.n_gpu > 1:
+                #     loss = loss.mean()  # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
                 tr_loss += loss.item()
@@ -343,7 +343,7 @@ def main():
 
     if args.do_test:
         logger.info("  " + "***** Testing *****")
-        logger.info("  Batch size = %d", args.eval_batch_size)
+        logger.info("  Batch size = %d", args.batch_size)
 
         for criteria in ['best-bleu']:
             file = os.path.join(args.output_dir, 'checkpoint-{}/pytorch_model.bin'.format(criteria))

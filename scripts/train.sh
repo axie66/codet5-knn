@@ -1,13 +1,20 @@
 python3 -i train.py \
     --task concode \
+    --lang java \
     --data_dir data/concode/dataset/concode \
     --cache_path data/concode \
     --summary_dir checkpoint/summary \
     --res_dir checkpoint/result \
     --output_dir checkpoint/output \
-    --add_task_prefix \
     --do_train \
     --do_test \
     --do_eval \
-    --batch_size 16 \
-    --
+    --num_train_epochs 10 \
+    --batch_size 2 \
+    --gradient_accumulation_steps 4 \
+    --learning_rate 2e-5 \
+    --beam_size 10 \
+    --weight_decay 1e-5 \
+    --wandb \
+    --max_target_length 512 \
+    --k 0

@@ -43,28 +43,23 @@ def compute_metric(translation_corpus, dataset_name, split, tokenizer=None, sect
         reference = dataset_object[index]['snippet'].lower()
         if return_data and len(log_data) < 100:
             log_data.append([
+                ' '.join(dataset_object[index]['intent']['words']),
                 reference,
-                translation['str'] if isinstance(translation, dict) else translation[0]['str']
+                translation['str'],
             ])
         tokenized_source = tokenizer.encode(reference, padding=True, truncation=True, return_tensors="pt")[0]
         if isinstance(translation, dict):
-            if is_equal(translation['token'], tokenized_source.to('cuda')):
+            if is_equal(translation['token'], tokenized_source):
                 exact_match_acc += 1
             else:
                 mistakes.append((index, translation['str']))
             translation = translation['str']
             translation_corpus[index] = translation
-        else:
-            if is_equal(translation[0]['token'], tokenized_source):
+        else: # translation is just a string
+            if is_equal(translation, tokenized_source):
                 exact_match_acc += 1
             else:
-                mistakes.append((index, translation[0]['str']))
-            for trans in translation:
-                if is_equal(trans['token'], tokenized_source):
-                    oracle_exact_match_acc += 1
-                    break
-            translation = translation[0]['str']
-            translation_corpus[index] = translation
+                mistakes.append((index, translation))
 
     bleu, bleu_sentence = compute_bleu(translation_corpus, dataset_object, section, args=args)
     metrics = {'bleu': bleu,

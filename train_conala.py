@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from data.conala.evaluation.compute_eval_metrics import compute_metric
 from dataset import get_elapse_time, load_conala_dataset, preprocess_batch_conala
 from config import add_args, add_knn_args, parse_args, set_seed
+from knn import KNN_Dstore
 
 from model import T5KNN, T5ForConditionalGeneration
 from transformers import RobertaTokenizer, AdamW, get_linear_schedule_with_warmup
@@ -19,6 +20,7 @@ from transformers import RobertaTokenizer, AdamW, get_linear_schedule_with_warmu
 logger = logging.getLogger(__name__)
 cuda = torch.cuda.is_available()
 device = torch.device('cuda' if cuda else 'cpu')
+print(device)
 
 try:
     import wandb
@@ -35,7 +37,6 @@ def train_epoch(args, model, train_dataloader, tokenizer, optimizer, scheduler,
     epoch_stats = {}
 
     for step, batch in enumerate(bar):
-        batch = tuple(t.to(args.device) for t in batch)
         source_ids = batch['source']['input_ids'].to(device)
         target_ids = batch['target']['input_ids'].to(device)
         source_mask = batch['source']['attention_mask'].to(device)
@@ -45,8 +46,6 @@ def train_epoch(args, model, train_dataloader, tokenizer, optimizer, scheduler,
                         labels=target_ids, decoder_attention_mask=target_mask)
         loss = outputs.loss
 
-        if args.n_gpu > 1:
-            loss = loss.mean()  # mean() to average on multi-gpu.
         if args.gradient_accumulation_steps > 1:
             loss = loss / args.gradient_accumulation_steps
         tr_loss += loss.item()
@@ -72,14 +71,14 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
     logger.info("  ***** Running bleu evaluation on {} data*****".format(split_tag))
     logger.info("  Num examples = %d", len(eval_examples))
     logger.info("  Batch size = %d", args.batch_size)
-    eval_dataloader = DataLoader(eval_data, suhffle=False, batch_size=args.batch_size,
-                                 num_workers=4 if cuda else 0)
+    eval_dataloader = DataLoader(eval_data, shuffle=False, batch_size=args.batch_size,
+        num_workers=4 if cuda else 0, collate_fn=preprocess_batch_conala)
 
     model.eval()
     pred_ids = []
     for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval bleu for {} set".format(split_tag)):
-        source_ids = batch[0].to(args.device)
-        source_mask = source_ids.ne(tokenizer.pad_token_id)
+        source_ids = batch['source']['input_ids'].to(device)
+        source_mask = batch['source']['attention_mask'].to(device)
         with torch.no_grad():
             preds = model.generate(source_ids,
                                     attention_mask=source_mask,
@@ -90,33 +89,41 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
             top_preds = list(preds.cpu().numpy())
             pred_ids.extend(top_preds)
 
-    pred_nls = [tokenizer.decode(id, skip_special_tokens=True, clean_up_tokenization_spaces=False) for id in pred_ids]
+    pred_nls = [{
+        'token': torch.tensor(ids, requires_grad=False),
+        'str': tokenizer.decode(ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+    } for ids in pred_ids]
 
-    output_fn = os.path.join(args.res_dir, "test_{}.output".format(criteria))
-    gold_fn = os.path.join(args.res_dir, "test_{}.gold".format(criteria))
-    src_fn = os.path.join(args.res_dir, "test_{}.src".format(criteria))
+    # output_fn = os.path.join(args.res_dir, "test_{}.output".format(criteria))
+    # gold_fn = os.path.join(args.res_dir, "test_{}.gold".format(criteria))
+    # src_fn = os.path.join(args.res_dir, "test_{}.src".format(criteria))
 
-    dev_accs = []
-    with open(output_fn, 'w') as f, open(gold_fn, 'w') as f1, open(src_fn, 'w') as f2:
-        for pred_nl, gold in zip(pred_nls, eval_examples):
-            dev_accs.append(pred_nl.strip() == gold.target.strip())
-            f.write(pred_nl.strip() + '\n')
-            f1.write(gold.target.strip() + '\n')
-            f2.write(gold.source.strip() + '\n')
+    # dev_accs = []
+    # with open(output_fn, 'w') as f, open(gold_fn, 'w') as f1, open(src_fn, 'w') as f2:
+    #     for pred_nl, gold in zip(pred_nls, eval_examples):
+    #         dev_accs.append(pred_nl.strip() == gold.target.strip())
+    #         f.write(pred_nl.strip() + '\n')
+    #         f1.write(gold.target.strip() + '\n')
+    #         f2.write(gold.source.strip() + '\n')
 
-    metrics, sampled_texts = compute_metric(pred_nls, 'conala', split='dev', 
+    metrics, sampled_texts = compute_metric(pred_nls, 'conala', split=split_tag,
         tokenizer=tokenizer, args=args, return_data=True)
 
     metrics['em'] = metrics.pop('exact_match')
 
     logger.info("***** Eval results *****")
     for key in sorted(metrics.keys()):
-        logger.info("  %s = %s", key, str(round(metrics[key], 4)))
+        try:
+            logger.info("  %s = %s", key, str(round(metrics[key], 4)))
+        except TypeError:
+            pass
 
     return metrics, sampled_texts
 
 
 def main():
+    global sampled_texts
+
     parser = add_knn_args(add_args(argparse.ArgumentParser()))
     args = parse_args(parser)
 
@@ -126,10 +133,11 @@ def main():
     set_seed(args)
     tokenizer = RobertaTokenizer.from_pretrained('Salesforce/codet5-base')
     if getattr(args, 'k', None):
-        model_class = T5KNN
+        model = T5KNN.from_pretrained('Salesforce/codet5-base')
+        model.set_knn_dstore(KNN_Dstore(args, vocab_size=tokenizer.vocab_size, 
+            pad_idx=tokenizer.pad_token_id))
     else:
-        model_class = T5ForConditionalGeneration
-    model = model_class.from_pretrained('Salesforce/codet5-base')
+        model = T5ForConditionalGeneration.from_pretrained('Salesforce/codet5-base')
     if os.path.isfile(args.model_name_or_path):
         model.load_state_dict(torch.load(args.model_name_or_path))
     model.to(device)
@@ -140,9 +148,8 @@ def main():
         wandb.init('knn-code-gen', config=vars(args))
 
     if args.do_train:
-
         # Prepare data loaders
-        train_data, valid_data, test_data = load_conala_dataset(args, model.tokenizer)
+        train_data, valid_data, test_data = load_conala_dataset(args, tokenizer)
 
         train_dataloader = DataLoader(train_data, shuffle=True, batch_size=args.batch_size,
                                       collate_fn=preprocess_batch_conala, num_workers=4 if cuda else 0)
@@ -190,7 +197,8 @@ def main():
                 epoch_stats['dev_bleu'] = dev_bleu
                 epoch_stats['dev_em'] = dev_em
                 epoch_stats['dev_bleu_em'] = dev_bleu_em
-                epoch_stats['text'] = wandb.Table(data=sampled_texts, columns=['Intent', 'GT', 'Pred'])
+                # Causes circular reference for some reason???
+                # epoch_stats['text'] = wandb.Table(data=sampled_texts, columns=['Intent', 'GT', 'Pred'])
 
                 if dev_bleu_em > best_bleu_em:
                     not_bleu_em_inc_cnt = 0
@@ -237,13 +245,14 @@ def main():
 
         criteria = 'best-bleu'
         file = os.path.join(args.output_dir, 'checkpoint-{}/pytorch_model.bin'.format(criteria))
-        if not os.path.isfile(file):
-            file = args.model_name_or_path
-        logger.info("Reload model from {}".format(file))
-        model.load_state_dict(torch.load(file))
-        train_data, valid_data, test_data = load_conala_dataset(args, model.tokenizer)
 
-        result = eval_bleu_epoch(args, test_data, test_data.data, model, tokenizer, 'test', criteria)
+        if os.path.isfile(file):
+            logger.info("Reload model from {}".format(file))
+            model.load_state_dict(torch.load(file))
+
+        train_data, valid_data, test_data = load_conala_dataset(args, tokenizer)
+
+        result, sampled_texts = eval_bleu_epoch(args, test_data, test_data.data, model, tokenizer, 'test', criteria)
         test_bleu, test_em = result['bleu'], result['em']
         test_codebleu = result['codebleu'] if 'codebleu' in result else 0
         result_str = "[%s] bleu-4: %.2f, em: %.4f, codebleu: %.4f\n" % (criteria, test_bleu, test_em, test_codebleu)
@@ -253,6 +262,11 @@ def main():
             with open(args.res_fn, 'a+') as f:
                 f.write('[Time: {}] {}\n'.format(get_elapse_time(t0), file))
                 f.write(result_str)
+        if args.wandb:
+            wandb.log({
+                **result,
+                'outputs': wandb.Table(data=sampled_texts, columns=['Intent', 'GT', 'Pred']),
+            })
     logger.info("Finish and take {}".format(get_elapse_time(t0)))
     fa.write("Finish and take {}".format(get_elapse_time(t0)))
     fa.close()

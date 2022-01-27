@@ -56,19 +56,19 @@ class SimpleDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.features)
 
-def collate_fn(batch):
+def preprocess_batch_concode(batch):
     xs = []
     ys = []
-    y_lens = []
+    # y_lens = []
     for x, y, y_len in batch:
         xs.append(x)
         ys.append(y)
-        y_lens.append(y_len)
+        # y_lens.append(y_len)
     # xs: (batch, src_seq_len)
     # ys: (batch, tgt_seq_len)
     if len(ys[0]) == 0: # source only
         return pad_sequence(xs)
-    return pad_sequence(xs, batch_first=True), pad_sequence(ys, batch_first=True), torch.tensor(y_lens)
+    return pad_sequence(xs, batch_first=True), pad_sequence(ys, batch_first=True)#, torch.tensor(y_lens)
 
 def read_concode_examples(filename, data_num):
     """Read examples from filename."""
