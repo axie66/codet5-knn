@@ -1,4 +1,5 @@
-python3 conala_store_embeds.py \
+python3 -i conala_store_embeds.py \
     --pretrained_path checkpoint/output/checkpoint-best-bleu/pytorch_model.bin \
-    --dataset_name conala \
-    --data_type train \
+    --data_type doc \
+    --batch_size 32 \
+    --mono_min_prob 0.1

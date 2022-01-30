@@ -161,8 +161,12 @@ class Conala(MonolingualPython):
     def _preprocess(self):
         json_file = os.path.join(self.dir_name, '{}.json'.format(self.split))
         if not os.path.exists(json_file):
-            examples = self.preprocess_dataset(
-                os.path.join(self.dir_name, 'conala-corpus/conala-{}.json'.format(self.split if self.split != 'dev' else 'train')))
+            if self.split == 'doc':
+                filepath = os.path.join(self.dir_name, 'python-docs.jsonl')
+            else:
+                filepath = os.path.join(self.dir_name, 
+                    'conala-corpus/conala-{}.json'.format(self.split if self.split != 'dev' else 'train'))
+            examples = self.preprocess_dataset(filepath)
             if self.split == 'dev':
                 examples = examples[-200:]
             elif self.split == 'train':

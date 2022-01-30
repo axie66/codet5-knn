@@ -5,3 +5,7 @@ __pycache__
 *.pyc
 *.pt
 *.DS_Store
+*.bin
+*.zip
+data/conala/conala-corpus
+data/conala/*.json

@@ -13,8 +13,12 @@ except:
     warnings.warn('Unable to import faiss.')
 import numpy as np
 import time
-from torch_scatter import scatter
-
+try:
+    from torch_scatter import scatter
+except:
+    def scatter(src: torch.Tensor, out: torch.Tensor, 
+                index: torch.LongTensor, dim: int):
+        out.scatter_(dim, index, src)
 
 def log_softmax(x, dim: int, onnx_trace: bool = False):
     if onnx_trace:

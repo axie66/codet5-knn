@@ -27,11 +27,13 @@ from model import T5ForConditionalGeneration
 parser = argparse.ArgumentParser()
 parser.add_argument('--pretrained_path', type=str, help='Location of pretrained model')
 parser.add_argument('--data_type', type=str, 
-    choices=['train', 'mined'], default='train', 
+    choices=['train', 'doc', 'mined'], default='train', 
     help='Type of data used in the store (each is a superset of the previous)')
 parser.add_argument('--save_kv_pairs', action='store_true', default=False)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--mono_min_prob', type=float, default=0.1)
+parser.add_argument('--add_lang_ids', action='store_true')
+parser.add_argument('--add_task_prefix', action='store_true')
 args = parser.parse_args()
 
 print(args)
@@ -41,17 +43,24 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # model = Model('bert-base-uncased', args)
 model = T5ForConditionalGeneration.from_pretrained('Salesforce/codet5-base')
 tokenizer = RobertaTokenizer.from_pretrained('Salesforce/codet5-base')
-model.to(device)
-model.load_state_dict(torch.load(args.pretrained_path))
-model.eval()
 
-data_types = ['train', 'mined']
+try:
+    model.to(device)
+    model.load_state_dict(torch.load(args.pretrained_path))
+    model.eval()
+except:
+    print('Unable to load pretrained weights')
+
+data_types = ['train', 'doc', 'mined']
 data_types = data_types[:data_types.index(args.data_type)+1]
 
 datasets = []
 if 'train' in data_types:
     datasets.append(Conala('conala', 'train', tokenizer, args, monolingual=False))
     datasets.append(Conala('conala', 'dev', tokenizer, args, monolingual=False))
+if 'doc' in data_types:
+    datasets.append(Conala('conala', 'doc', tokenizer, args, monolingual=False))
+    import pdb; pdb.set_trace()
 if 'mined' in data_types:
     datasets.append(Conala('conala', 'train', tokenizer, args, monolingual=True))
 
