@@ -60,7 +60,6 @@ if 'train' in data_types:
     datasets.append(Conala('conala', 'dev', tokenizer, args, monolingual=False))
 if 'doc' in data_types:
     datasets.append(Conala('conala', 'doc', tokenizer, args, monolingual=False))
-    import pdb; pdb.set_trace()
 if 'mined' in data_types:
     datasets.append(Conala('conala', 'train', tokenizer, args, monolingual=True))
 

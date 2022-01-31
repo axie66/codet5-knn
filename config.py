@@ -140,6 +140,8 @@ def add_knn_args(parser):
                         help='do not load keys')
     parser.add_argument('--knn-q2gpu', action='store_true', default=False,
                         help='move the quantizer from faiss to gpu')
+
+    parser.add_argument('--knn_gate', action='store_true')
     
     # probably shouldn't use this flag (except for small datastores)
     parser.add_argument('--move-dstore-to-mem', default=False, action='store_true', 

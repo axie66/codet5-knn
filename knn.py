@@ -164,15 +164,16 @@ class KNN_Dstore(object):
         batch, seq_len = queries.shape[:2]
         dists, knns = self.get_knns(queries.contiguous().view(-1, queries.size(-1)))  # [Batch * seq len, K]
 
-        nn_vals = self.vals[knns].to(queries.device).squeeze(-1)  # [Batch size * Seq len, K]
+        nn_vals = torch.from_numpy(self.vals[knns]).long().to(queries.device).squeeze(-1)  # [Batch size * Seq len, K]
         nn_vals = nn_vals.view(batch, seq_len, -1)  # [B, S, K]
-        nn_keys = self.keys[knns].to(queries.device) # [B, S, K, H]
+        nn_keys = torch.from_numpy(self.keys[knns]).to(queries.device) # [B, S, K, H]
+        nn_keys = nn_keys.view(batch, seq_len, self.k, -1)
 
-        dists = dists.view(batch, seq_len, -1)  # [B, S, K]
-        knns = knns.view(batch, seq_len, -1)  # [B, S, K]
+        dists = torch.from_numpy(dists).view(batch, seq_len, -1)  # [B, S, K]
+        knns = torch.from_numpy(knns).view(batch, seq_len, -1)  # [B, S, K]
         return dists, knns, nn_vals, nn_keys
 
-    def get_knn_scores_per_step(self, queries, use_dtype=torch.float32, save_knns=False):#, knn_temp=1.0):
+    def get_knn_scores_per_step(self, queries, use_dtype=torch.float32, ret_knns=False):#, knn_temp=1.0):
         qshape = queries.shape
         queries = queries.view(-1, qshape[-1])
         dists, knns = self.get_knns(queries)
@@ -211,8 +212,8 @@ class KNN_Dstore(object):
         full_knn_scores.scatter_(dim=1, index=knn_vals_by_index, src=knn_scores_by_index)
         ## TRYING SOMETHING OUT
 
-        if save_knns:
-            return full_knn_scores, (torch.from_numpy(knns).long().cuda(), probs.squeeze(-1), indices.squeeze(-1))
+        if ret_knns:
+            return full_knn_scores, torch.from_numpy(knns).long().cuda()
 
         return full_knn_scores
 
@@ -235,9 +236,11 @@ class KNN_Dstore(object):
     def scatter_knn_scores(self, knn_scores, tgt_index):
         B, S, K = knn_scores.shape
         knn_tgt_prob = torch.zeros(B, S, K, self.vocab_size).to(knn_scores)  # [B, S, K, Vocab Size]
-        tgt_index = tgt_index.unsqueeze_(-1)  # [B, S, K, 1]
+        tgt_index = tgt_index.unsqueeze(-1)  # [B, S, K, 1]
+        knn_scores = knn_scores.unsqueeze(-1) # [B, S, K, 1]
 
         scatter(src=knn_scores.float(), out=knn_tgt_prob, index=tgt_index, dim=-1)
+        # out[b][s][k][index[b][s][k][v]] = src[b][s][k][v]
 
         prob = knn_tgt_prob.sum(dim=-2)  # [Batch Size, seq len, vocab size]
         return prob

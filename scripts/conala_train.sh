@@ -1,5 +1,5 @@
-for i in 1 2 3 4 5
-do
+# for i in 1 2 3 4 5
+# do
 python3 -i train_conala.py \
     --task conala \
     --lang python \
@@ -19,5 +19,5 @@ python3 -i train_conala.py \
     --wandb \
     --max_target_length 512 \
     --k 0 \
-    --seed ${RANDOM}
-done
+    --seed 12761
+# done

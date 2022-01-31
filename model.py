@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 from knn import KNN_Dstore
 from _modeling_t5 import T5ForConditionalGeneration, ModelOutput
 
+import torch.nn.functional as F
 
 @dataclass
 class KNNSeq2SeqLMOutput(ModelOutput):
@@ -34,6 +35,12 @@ class T5KNN(T5ForConditionalGeneration):
         self.dstore = dstore
         self.lmbda = dstore.lmbda
 
+        self.counts = {
+            'train': 0,
+            'doc': 0,
+            'mined': 0
+        }
+
     def combine_probs(self, lprobs, knn_scores, lmbda=None):
         '''
         inspired by (but modified from) kNN-MT
@@ -41,12 +48,12 @@ class T5KNN(T5ForConditionalGeneration):
         '''
         # lprobs: (batch x beams, vocab_size)
         # knn_scores: (batch x beams, vocab_size)
-        assert isinstance(lmbda, (int, list))
+        assert lmbda is None or isinstance(lmbda, (float, list))
 
         combined = torch.stack([lprobs, knn_scores.to(lprobs)], dim=-1)
         if lmbda is None:
-            lmbda = self.lmbda
-        if isinstance(lmbda, int):
+            lmbda = float(self.lmbda)
+        if isinstance(lmbda, float):
             lmbda = torch.tensor([1 - lmbda, lmbda])
         else:
             lmbda = torch.tensor(lmbda)
@@ -56,7 +63,7 @@ class T5KNN(T5ForConditionalGeneration):
         return combined
 
     def forward(self, *args, **kwargs):
-        assert not self.training() # kNN only at inference time
+        assert not self.training # kNN only at inference time
 
         if not hasattr(self, 'dstore'):
             raise Exception('T5KNN model must be assigned datastore object before being called')
@@ -72,7 +79,15 @@ class T5KNN(T5ForConditionalGeneration):
         else:
             query = output.encoder_ffn_inputs[-1][:, -1]
 
-        knn_scores = self.dstore.get_knn_scores_per_step(query)
+        knn_scores, knns = self.dstore.get_knn_scores_per_step(query, ret_knns=True)
+        
+        # train_knns = knns < 39851
+        # doc_knns = knns < 195322
+        # knn_types = train_knns + doc_knns
+        # self.counts['train'] += int((knn_types == 2).sum().cpu())
+        # self.counts['doc'] += int((knn_types == 1).sum().cpu())
+        # self.counts['mined'] += int((knn_types == 0).sum().cpu())
+
         combined_logits = self.combine_probs(lprobs, knn_scores)
         output.logits[:, -1] = combined_logits
 
@@ -101,18 +116,28 @@ class T5GatedKNN(T5KNN):
     def __init__(self, *args, k=64, k_embed_dim=0, gate_drop=0.0, use_dists=True, **kwargs):
         super(T5KNN, self).__init__(*args, **kwargs)
         
+        self.k = k
         self.use_dists = use_dists
         self.learned_k_embed = k_embed_dim > 0
         if self.learned_k_embed:
             self.k_embeddings = nn.Embedding(k, k_embed_dim)
-        
-        gate_dim = 2 * self.config.hidden_size + k_embed_dim
+
+        gate_dim = 2 * self.encoder.config.hidden_size + k_embed_dim
         self.knn_gate = nn.Sequential(
             nn.Linear(gate_dim, gate_dim),
             nn.Tanh(),
             nn.Dropout(gate_drop),
             nn.Linear(gate_dim, 1)
         )
+
+        for layer in self.knn_gate.modules():
+            if isinstance(layer, nn.Linear):
+                nn.init.normal_(layer.weight, mean=0, std=0.01)
+
+        unfrozen = ['shared.weight', 'k_embeddings', 'knn_gate']
+
+        for name, m in self.named_parameters():
+            m.requires_grad = any(name in layer_name for layer_name in unfrozen)
 
     def forward(self, *args, **kwargs):
         if not hasattr(self, 'dstore'):
@@ -128,6 +153,9 @@ class T5GatedKNN(T5KNN):
         else:
             queries = output.encoder_ffn_inputs[-1]
 
+        if not self.training:
+            queries = queries[:, -1]
+
         distance, knn, nn_vals, nn_keys = self.dstore.retrieve(queries)
 
         gate_input = [
@@ -136,23 +164,38 @@ class T5GatedKNN(T5KNN):
         ]
         if self.learned_k_embed:
             batch, seq_len = queries.shape[:2]
-            gate_input.append(self.k_embeddings.weight.expand(batch, seq_len, -1, -1))
+            k_indices = torch.arange(self.k).to(queries).unsqueeze(0).unsqueeze(0).expand(batch, seq_len, -1).long()
+            index_embeds = self.k_embeddings(k_indices)
+            gate_input.append(index_embeds)
+
         gate_input = torch.cat(gate_input, dim=-1) # batch, seq, k, 2 * hidden + k_emb
         
         select_probs = self.knn_gate(gate_input)
 
         if self.use_dists:
+            distance = distance.to(queries)
             lprobs = output.logits.log_softmax(dim=-1)
             knn_probs = self.dstore.calculate_select_knn_prob(distance, nn_vals, torch.sigmoid(select_probs))
             knn_lprobs = torch.log_softmax(knn_probs)
             logits = self.combine_probs(lprobs, knn_lprobs, lmbda=[1., 1.])
         else:
             lprobs = knn_lprobs = None
-            knn_logits = self.dstore.scatter_knn_scores(select_probs)
-            logits = output.logits + knn_logits
+            select_probs = select_probs.squeeze(-1)
+            knn_logits = self.dstore.scatter_knn_scores(select_probs, nn_vals)
+            if self.training:
+                logits = output.logits + knn_logits
+            else:
+                logits = output.logits
+                logits[:, -1] += knn_logits
+
+        if 'labels' in kwargs and self.training:
+            labels = kwargs['labels']
+            loss = F.cross_entropy(logits.view(-1, logits.shape[-1]), labels.view(-1))
+        else:
+            loss = output.loss
 
         return KNNSeq2SeqLMOutput(
-            loss=output.loss,
+            loss=loss,
             logits=logits,
             past_key_values=output.past_key_values,
 

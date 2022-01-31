@@ -14,8 +14,9 @@ from dataset import get_elapse_time, load_conala_dataset, preprocess_batch_conal
 from config import add_args, add_knn_args, parse_args, set_seed
 from knn import KNN_Dstore
 
-from model import T5KNN, T5ForConditionalGeneration
-from transformers import RobertaTokenizer, AdamW, get_linear_schedule_with_warmup
+from model import T5KNN, T5ForConditionalGeneration, T5GatedKNN
+from transformers import RobertaTokenizer, get_linear_schedule_with_warmup
+from torch.optim import AdamW
 
 logger = logging.getLogger(__name__)
 cuda = torch.cuda.is_available()
@@ -58,7 +59,8 @@ def train_epoch(args, model, train_dataloader, tokenizer, optimizer, scheduler,
             # Update parameters
             optimizer.step()
             optimizer.zero_grad()
-            scheduler.step()
+            if scheduler is not None:
+                scheduler.step()
             global_step += 1
             train_loss = round(tr_loss * args.gradient_accumulation_steps / (nb_tr_steps + 1), 4)
             bar.set_description("[{}] Train loss {}".format(cur_epoch, round(train_loss, 3)))
@@ -132,14 +134,22 @@ def main():
 
     set_seed(args)
     tokenizer = RobertaTokenizer.from_pretrained('Salesforce/codet5-base')
-    if getattr(args, 'k', None):
+    if getattr(args, 'knn_gate', None):
+        model = T5GatedKNN.from_pretrained('Salesforce/codet5-base', 
+            k=args.k, k_embed_dim=256, use_dists=False)
+        model.set_knn_dstore(KNN_Dstore(args, vocab_size=tokenizer.vocab_size,
+            pad_idx=tokenizer.pad_token_id))
+    elif getattr(args, 'k', None):
         model = T5KNN.from_pretrained('Salesforce/codet5-base')
         model.set_knn_dstore(KNN_Dstore(args, vocab_size=tokenizer.vocab_size, 
             pad_idx=tokenizer.pad_token_id))
     else:
         model = T5ForConditionalGeneration.from_pretrained('Salesforce/codet5-base')
     if os.path.isfile(args.model_name_or_path):
+        print('Loaded pretrained weights from', args.model_name_or_path)
         model.load_state_dict(torch.load(args.model_name_or_path))
+
+    print("Using model of type", type(model))
     model.to(device)
 
     fa = open(os.path.join(args.output_dir, 'summary.log'), 'a+')
@@ -159,17 +169,27 @@ def main():
                                      collate_fn=preprocess_batch_conala, num_workers=4 if cuda else 0)
 
         # Prepare optimizer and schedule (linear warmup and decay)
-        no_decay = ['bias', 'LayerNorm.weight']
-        optimizer_grouped_parameters = [
-            {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-             'weight_decay': args.weight_decay},
-            {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-        ]
-        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
-        num_train_optimization_steps = args.num_train_epochs * len(train_dataloader)
-        scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                    num_warmup_steps=args.warmup_steps,
-                                                    num_training_steps=num_train_optimization_steps)
+        if getattr(args, 'knn_gate', None):
+            optimizer_grouped_parameters = [
+                {'params': [p for n, p in model.named_parameters() if n == 'lm_head'],
+                 'lr': 1e-5},
+                {'params': [p for n, p in model.named_parameters() if n in ('k_embeddings', 'knn_g')]}
+            ]
+            optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon, weight_decay=args.weight_decay)
+            scheduler = None
+        else:
+            no_decay = ['bias', 'LayerNorm.weight']
+            optimizer_grouped_parameters = [
+                {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+                 'weight_decay': args.weight_decay},
+                {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 
+                 'weight_decay': 0.0}
+            ]
+            optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+            num_train_optimization_steps = args.num_train_epochs * len(train_dataloader)
+            scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                        num_warmup_steps=args.warmup_steps,
+                                                        num_training_steps=num_train_optimization_steps)
 
         # Start training
         train_example_num = len(train_data)
@@ -255,6 +275,7 @@ def main():
         result, sampled_texts = eval_bleu_epoch(args, test_data, test_data.data, model, tokenizer, 'test', criteria)
         test_bleu, test_em = result['bleu'], result['em']
         test_codebleu = result['codebleu'] if 'codebleu' in result else 0
+        print(model.counts)
         result_str = "[%s] bleu-4: %.2f, em: %.4f, codebleu: %.4f\n" % (criteria, test_bleu, test_em, test_codebleu)
         logger.info(result_str)
         fa.write(result_str)
@@ -265,6 +286,7 @@ def main():
         if args.wandb:
             wandb.log({
                 **result,
+                **model.counts,
                 'outputs': wandb.Table(data=sampled_texts, columns=['Intent', 'GT', 'Pred']),
             })
     logger.info("Finish and take {}".format(get_elapse_time(t0)))

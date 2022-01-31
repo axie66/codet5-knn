@@ -1,18 +1,5 @@
 DSTORE_TYPE="mined"
-
-if [ $DSTORE_TYPE = "mined" ]
-then
-    DSTORE_SIZE=1869575 # 1829724
-elif [ $DSTORE_TYPE = "train" ]
-then
-    DSTORE_SIZE=39851
-elif [ $DSTORE_TYPE = "doc" ]
-then
-    DSTORE_SIZE=195322
-else
-   echo "Error: Unknown DSTORE_TYPE '${DSTORE_TYPE}'"
-   exit 1
-fi
+DSTORE_SIZE=1829724 # not using conala train data
 
 python3 -i train_conala.py \
     --task conala \
@@ -21,19 +8,22 @@ python3 -i train_conala.py \
     --summary_dir checkpoint/summary \
     --res_dir checkpoint/result \
     --output_dir checkpoint/output \
+    --model_name_or_path checkpoint/output/trained_model.bin \
     --data_dir foo \
+    --do_train \
     --do_test \
+    --do_eval \
+    --num_train_epochs 10 \
     --batch_size 16 \
+    --learning_rate 1e-4 \
     --beam_size 10 \
+    --weight_decay 1e-5 \
     --wandb \
     --max_target_length 128 \
-    --seed 1234 \
+    --k 32 \
+    --knn_gate \
     --dstore-fp16 \
-    --k 16 \
-    --probe 8 \
-    --lmbda 0.05 \
-    --knn_temp 10.0 \
     --dstore-size ${DSTORE_SIZE} \
     --dstore-filename datastore/${DSTORE_TYPE} \
-    --indexfile datastore/${DSTORE_TYPE}_knn.index
-    # --no-load-keys
+    --indexfile datastore/${DSTORE_TYPE}_knn.index \
+    --seed 1234
