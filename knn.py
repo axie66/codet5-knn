@@ -7,6 +7,7 @@ import pickle
 import torch
 import torch.nn.functional as F
 import warnings
+import ctypes
 try:
     import faiss
 except:
@@ -65,6 +66,12 @@ class KNN_Dstore(object):
             quantizer_gpu = faiss.index_cpu_to_all_gpus(quantizer, ngpu=1)
             index_ivf.quantizer = quantizer_gpu
 
+        if args.faiss_gpu:
+            co = faiss.GPUClonerOptions()
+            co.useFloat16 = True
+            res = faiss.StandardGPUResources()
+            index = faiss.index_cpu_to_gpu(res, 0, index, co)
+
         index.nprobe = args.probe
 
         if self.use_faiss_only:
@@ -81,6 +88,14 @@ class KNN_Dstore(object):
                 self.keys = np.memmap(args.dstore_filename+'_keys.npy', dtype=np.float32, mode='r', shape=(self.dstore_size, self.dimension))
             self.vals = np.memmap(args.dstore_filename+'_vals.npy', dtype=np.int64, mode='r', shape=(self.dstore_size, 1))
 
+        if hasattr(self, 'keys'):
+            # from https://github.com/numpy/numpy/issues/13172
+            # to speed up access to np.memmap
+            madvise = ctypes.CDLL("libc.so.6").madvise
+            madvise.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+            madvise.restype = ctypes.c_int
+            assert madvise(self.keys.ctypes.data, self.keys.size * self.keys.dtype.itemsize, 1) == 0, "MADVISE FAILED" # 1 means MADV_RANDOM
+
         # If you wish to load all the keys into memory
         # CAUTION: Only do this if your RAM can handle it!
         if args.move_dstore_to_mem:
@@ -96,15 +111,14 @@ class KNN_Dstore(object):
 
             del self.vals
             self.vals_from_memmap = np.memmap(args.dstore_filename+'_vals.npy', dtype=np.int, mode='r', shape=(self.dstore_size, 1))
-            self.vals = np.zeros((self.dstore_size, 1), dtype=np.int16 if args.dstore_fp16 else np.int)
+            self.vals = np.zeros((self.dstore_size, 1), dtype=np.int32 if args.dstore_fp16 else np.int64)
             self.vals = self.vals_from_memmap[:]
-            self.vals = self.vals.astype(np.int16 if args.dstore_fp16 else np.int)
+            self.vals = torch.from_numpy(self.vals)
             print('Loading to memory took {} s'.format(time.time() - start))
         return index
 
     def get_knns(self, queries):
-        dists, knns = self.index.search(queries.detach().cpu().float().numpy(), self.k)
-        return dists, knns
+        return self.index.search(queries.detach().float(), self.k)
 
     def dist_func(self, d, k, q, function=None):
         if not function:
@@ -159,19 +173,24 @@ class KNN_Dstore(object):
         # TxBx1
         return full_yhat_knn_prob.view(qshape[0], qshape[1], 1)
 
-    def retrieve(self, queries):
+    def retrieve(self, queries, ret_keys=False):
         # queries are [batch, seq_len, hidden]
         batch, seq_len = queries.shape[:2]
         dists, knns = self.get_knns(queries.contiguous().view(-1, queries.size(-1)))  # [Batch * seq len, K]
 
-        nn_vals = torch.from_numpy(self.vals[knns]).long().to(queries.device).squeeze(-1)  # [Batch size * Seq len, K]
+        nn_vals = (self.vals[knns]).long().to(queries).squeeze(-1)  # [Batch size * Seq len, K]
         nn_vals = nn_vals.view(batch, seq_len, -1)  # [B, S, K]
-        nn_keys = torch.from_numpy(self.keys[knns]).to(queries.device) # [B, S, K, H]
-        nn_keys = nn_keys.view(batch, seq_len, self.k, -1)
+        if ret_keys:
+            nn_keys = torch.from_numpy(self.keys[knns]).to(queries) # [B, S, K, H]
+            nn_keys = nn_keys.view(batch, seq_len, self.k, -1)
 
-        dists = torch.from_numpy(dists).view(batch, seq_len, -1)  # [B, S, K]
-        knns = torch.from_numpy(knns).view(batch, seq_len, -1)  # [B, S, K]
-        return dists, knns, nn_vals, nn_keys
+        dists = torch.from_numpy(dists).view(batch, seq_len, -1).to(queries)  # [B, S, K]
+        knns = torch.from_numpy(knns).view(batch, seq_len, -1).to(queries)  # [B, S, K]
+
+        result = (dists, knns, nn_vals)
+        if ret_keys:
+            result += (nn_keys,)
+        return result
 
     def get_knn_scores_per_step(self, queries, use_dtype=torch.float32, ret_knns=False):#, knn_temp=1.0):
         qshape = queries.shape

@@ -1,0 +1,6 @@
+tree-sitter=0.2.2
+wandb
+babel
+wget
+faiss-gpu
+matplotlib

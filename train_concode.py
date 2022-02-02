@@ -68,23 +68,22 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
     model.eval()
     pred_ids = []
     bleu, codebleu = 0.0, 0.0
-    for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval bleu for {} set".format(split_tag)):
+    for i, batch in enumerate(tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval bleu for {} set".format(split_tag))):
         source_ids = batch[0].to(device)
         source_mask = source_ids.ne(tokenizer.pad_token_id)
         with torch.no_grad():
-            if args.model_type == 'roberta':
-                preds = model(source_ids=source_ids, source_mask=source_mask)
-
-                top_preds = [pred[0].cpu().numpy() for pred in preds]
-            else:
-                preds = model.generate(source_ids,
-                                       attention_mask=source_mask,
-                                       use_cache=True,
-                                       num_beams=args.beam_size,
-                                       early_stopping=args.task == 'summarize',
-                                       max_length=args.max_target_length)
-                top_preds = list(preds.cpu().numpy())
+            preds = model.generate(source_ids,
+                                    attention_mask=source_mask,
+                                    use_cache=True,
+                                    num_beams=args.beam_size,
+                                    early_stopping=args.task == 'summarize',
+                                    max_length=args.max_target_length)
+            top_preds = list(preds.cpu().numpy())
             pred_ids.extend(top_preds)
+
+            if i < 10:
+                print(tokenizer.decode(top_preds[0], skip_special_tokens=True, clean_up_tokenization_spaces=False))
+                print(tokenizer.decode(batch[1][0]))
 
     pred_nls = [tokenizer.decode(id, skip_special_tokens=True, clean_up_tokenization_spaces=False) for id in pred_ids]
 
@@ -92,44 +91,25 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
     gold_fn = os.path.join(args.res_dir, "test_{}.gold".format(criteria))
     src_fn = os.path.join(args.res_dir, "test_{}.src".format(criteria))
 
-    if args.task in ['defect']:
-        target_dict = {0: 'false', 1: 'true'}
-        golds = [target_dict[ex.target] for ex in eval_examples]
-        eval_acc = np.mean([int(p == g) for p, g in zip(pred_nls, golds)])
-        result = {'em': eval_acc * 100, 'bleu': 0, 'codebleu': 0}
-
-        with open(output_fn, 'w') as f, open(gold_fn, 'w') as f1, open(src_fn, 'w') as f2:
-            for pred_nl, gold in zip(pred_nls, eval_examples):
+    dev_accs, predictions = [], []
+    with open(output_fn, 'w') as f, open(gold_fn, 'w') as f1, open(src_fn, 'w') as f2:
+        for pred_nl, gold in zip(pred_nls, eval_examples):
+            dev_accs.append(pred_nl.strip() == gold.target.strip())
+            if args.task in ['summarize']:
+                predictions.append(str(gold.idx) + '\t' + pred_nl)
+                f.write(str(gold.idx) + '\t' + pred_nl.strip() + '\n')
+                f1.write(str(gold.idx) + '\t' + gold.target.strip() + '\n')
+                f2.write(str(gold.idx) + '\t' + gold.source.strip() + '\n')
+            else:
                 f.write(pred_nl.strip() + '\n')
-                f1.write(target_dict[gold.target] + '\n')
+                f1.write(gold.target.strip() + '\n')
                 f2.write(gold.source.strip() + '\n')
-            logger.info("Save the predictions into %s", output_fn)
-    else:
-        dev_accs, predictions = [], []
-        with open(output_fn, 'w') as f, open(gold_fn, 'w') as f1, open(src_fn, 'w') as f2:
-            for pred_nl, gold in zip(pred_nls, eval_examples):
-                dev_accs.append(pred_nl.strip() == gold.target.strip())
-                if args.task in ['summarize']:
-                    predictions.append(str(gold.idx) + '\t' + pred_nl)
-                    f.write(str(gold.idx) + '\t' + pred_nl.strip() + '\n')
-                    f1.write(str(gold.idx) + '\t' + gold.target.strip() + '\n')
-                    f2.write(str(gold.idx) + '\t' + gold.source.strip() + '\n')
-                else:
-                    f.write(pred_nl.strip() + '\n')
-                    f1.write(gold.target.strip() + '\n')
-                    f2.write(gold.source.strip() + '\n')
 
-        if args.task == 'summarize':
-            (goldMap, predictionMap) = smooth_bleu.computeMaps(predictions, gold_fn)
-            bleu = round(smooth_bleu.bleuFromMaps(goldMap, predictionMap)[0], 2)
-        else:
-            bleu = round(_bleu(gold_fn, output_fn), 2)
-            if args.task in ['concode', 'translate', 'refine']:
-                codebleu = calc_code_bleu.get_codebleu(gold_fn, output_fn, args.lang)
+        bleu = round(_bleu(gold_fn, output_fn), 2)
+        codebleu = calc_code_bleu.get_codebleu(gold_fn, output_fn, args.lang)
 
         result = {'em': np.mean(dev_accs) * 100, 'bleu': bleu}
-        if args.task == 'concode':
-            result['codebleu'] = codebleu * 100
+        result['codebleu'] = codebleu * 100
 
     logger.info("***** Eval results *****")
     for key in sorted(result.keys()):
@@ -345,24 +325,24 @@ def main():
         logger.info("  " + "***** Testing *****")
         logger.info("  Batch size = %d", args.batch_size)
 
-        for criteria in ['best-bleu']:
-            file = os.path.join(args.output_dir, 'checkpoint-{}/pytorch_model.bin'.format(criteria))
-            if not os.path.isfile(file):
-                file = args.model_name_or_path
-            logger.info("Reload model from {}".format(file))
-            model.load_state_dict(torch.load(file))
-            eval_examples, eval_data = load_and_cache_concode_data(args, args.test_filename, tokenizer, 'test',
-                                                               only_src=True, is_sample=False)
-            result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'test', criteria)
-            test_bleu, test_em = result['bleu'], result['em']
-            test_codebleu = result['codebleu'] if 'codebleu' in result else 0
-            result_str = "[%s] bleu-4: %.2f, em: %.4f, codebleu: %.4f\n" % (criteria, test_bleu, test_em, test_codebleu)
-            logger.info(result_str)
-            fa.write(result_str)
-            if args.res_fn:
-                with open(args.res_fn, 'a+') as f:
-                    f.write('[Time: {}] {}\n'.format(get_elapse_time(t0), file))
-                    f.write(result_str)
+        criteria = 'best-bleu'
+        file = os.path.join(args.output_dir, 'checkpoint-{}/pytorch_model.bin'.format(criteria))
+        if not os.path.isfile(file):
+            file = args.model_name_or_path
+        logger.info("Reload model from {}".format(file))
+        model.load_state_dict(torch.load(file))
+        eval_examples, eval_data = load_and_cache_concode_data(args, args.test_filename, tokenizer, 'test',
+                                                            only_src=True, is_sample=False)
+        result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'test', criteria)
+        test_bleu, test_em = result['bleu'], result['em']
+        test_codebleu = result['codebleu'] if 'codebleu' in result else 0
+        result_str = "[%s] bleu-4: %.2f, em: %.4f, codebleu: %.4f\n" % (criteria, test_bleu, test_em, test_codebleu)
+        logger.info(result_str)
+        fa.write(result_str)
+        if args.res_fn:
+            with open(args.res_fn, 'a+') as f:
+                f.write('[Time: {}] {}\n'.format(get_elapse_time(t0), file))
+                f.write(result_str)
     logger.info("Finish and take {}".format(get_elapse_time(t0)))
     fa.write("Finish and take {}".format(get_elapse_time(t0)))
     fa.close()

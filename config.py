@@ -126,6 +126,8 @@ def add_knn_args(parser):
                         help='do not look up the keys/values from a separate array')
     parser.add_argument('--faiss_metric_type', type=str, default='l2',
                         help='distance metric for faiss')
+    parser.add_argument('--faiss_gpu', action='store_true',
+                        help='Use faiss-gpu for lookup')
 
     # Datastore related stuff
     parser.add_argument('--dstore-size', type=int,
