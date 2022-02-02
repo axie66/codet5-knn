@@ -6,15 +6,18 @@ python3 -i train.py \
     --summary_dir checkpoint/summary \
     --res_dir checkpoint/result \
     --output_dir checkpoint/output \
-    --do_train \
+    --model_name_or_path checkpoint/weights/concode_codet5_base.bin \
     --do_test \
+    --do_train \
     --do_eval \
-    --num_train_epochs 10 \
-    --batch_size 2 \
-    --gradient_accumulation_steps 4 \
-    --learning_rate 2e-5 \
+    --num_train_epochs 30 \
+    --batch_size 8 \
+    --learning_rate 1e-4 \
     --beam_size 10 \
+    --patience 3 \
     --weight_decay 1e-5 \
-    --wandb \
-    --max_target_length 512 \
+    --gradient_accumulation_steps 4 \
+    --max_source_length 320 \
+    --max_target_length 150 \
+    --warmup_steps 1000 \
     --k 0

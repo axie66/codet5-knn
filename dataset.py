@@ -120,19 +120,19 @@ def convert_examples_to_features(item):
         source_ids = tokenizer.encode(source_str, max_length=512, truncation=True)
     assert source_ids.count(tokenizer.eos_token_id) == 1
 
-    if stage == 'test':
-        target_ids = []
-    else:
-        target_str = example.target
-        if args.add_lang_ids:
-            target_str = add_lang_by_task(example.target, args.task, args.sub_task)
-        target_str = target_str.replace('</s>', '<unk>')
-        if args.max_target_length > 0:
-            target_ids = tokenizer.encode(target_str, max_length=args.max_target_length, padding='max_length',
+    #if stage == 'test':
+    #    target_ids = []
+    #else:
+    target_str = example.target
+    if args.add_lang_ids:
+        target_str = add_lang_by_task(example.target, args.task, args.sub_task)
+    target_str = target_str.replace('</s>', '<unk>')
+    if args.max_target_length > 0:
+        target_ids = tokenizer.encode(target_str, max_length=args.max_target_length, padding='max_length',
                                           truncation=True)
-        else:
-            target_ids = tokenizer.encode(target_str)
-        assert target_ids.count(tokenizer.eos_token_id) == 1
+    else:
+        target_ids = tokenizer.encode(target_str)
+    assert target_ids.count(tokenizer.eos_token_id) == 1
 
     return InputFeatures(
         example_index,
