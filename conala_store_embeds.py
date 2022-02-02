@@ -26,9 +26,12 @@ from model import T5ForConditionalGeneration
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pretrained_path', type=str, help='Location of pretrained model')
-parser.add_argument('--data_type', type=str, 
-    choices=['train', 'doc', 'mined'], default='train', 
-    help='Type of data used in the store (each is a superset of the previous)')
+
+# What kind of data to use in datastore
+parser.add_argument('--use_train', action='store_true')
+parser.add_argument('--use_doc', action='store_true')
+parser.add_argument('--use_mined', action='store_true')
+
 parser.add_argument('--save_kv_pairs', action='store_true', default=False)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--mono_min_prob', type=float, default=0.1)
@@ -51,17 +54,21 @@ try:
 except:
     print('Unable to load pretrained weights')
 
-data_types = ['train', 'doc', 'mined']
-data_types = data_types[:data_types.index(args.data_type)+1]
+dataset_str = []
 
 datasets = []
-if 'train' in data_types:
+if args.use_train:
+    dataset_str.append('train')
     datasets.append(Conala('conala', 'train', tokenizer, args, monolingual=False))
     datasets.append(Conala('conala', 'dev', tokenizer, args, monolingual=False))
-if 'doc' in data_types:
+if args.use_doc:
+    dataset_str.append('doc')
     datasets.append(Conala('conala', 'doc', tokenizer, args, monolingual=False))
-if 'mined' in data_types:
+if args.use_mined:
+    dataset_str.append('mined')
     datasets.append(Conala('conala', 'train', tokenizer, args, monolingual=True))
+
+dataset_str = '-'.join(dataset_str)
 
 full_dataset = datasets[0]
 for i in range(1, len(datasets)):
@@ -89,9 +96,9 @@ print('Size of each key:', key_size)
 if not os.path.isdir('datastore'):
     os.mkdir('datastore')
 
-dstore_keys = np.memmap(f'datastore/{args.data_type}_keys.npy', dtype=np.float16, mode='w+',
+dstore_keys = np.memmap(f'datastore/{dataset_str}_keys.npy', dtype=np.float16, mode='w+',
                         shape=(dstore_size, key_size))
-dstore_vals = np.memmap(f'datastore/{args.data_type}_vals.npy', dtype=np.int32, mode='w+',
+dstore_vals = np.memmap(f'datastore/{dataset_str}_vals.npy', dtype=np.int32, mode='w+',
                         shape=(dstore_size, 1))
 
 if args.save_kv_pairs:
@@ -132,5 +139,5 @@ dstore_vals.flush()
 print('Finished saving vectors.')
 
 if args.save_kv_pairs:
-    with open(f'datastore/{args.data_type}_kv_pairs.p', 'wb+') as f:
+    with open(f'datastore/{dataset_str}_kv_pairs.p', 'wb+') as f:
         pickle.dump(kv_pairs, f)
