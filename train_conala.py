@@ -15,8 +15,7 @@ from config import add_args, add_knn_args, parse_args, set_seed
 from knn import KNN_Dstore
 
 from model import T5KNN, T5ForConditionalGeneration, T5AttnKNN
-from transformers import RobertaTokenizer, get_linear_schedule_with_warmup
-from torch.optim import AdamW
+from transformers import RobertaTokenizer, get_linear_schedule_with_warmup, AdamW
 
 logger = logging.getLogger(__name__)
 cuda = torch.cuda.is_available()
@@ -172,7 +171,7 @@ def main():
             {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 
                 'weight_decay': 0.0}
         ]
-        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon, weight_decay=0.0)
         num_train_optimization_steps = args.num_train_epochs * len(train_dataloader)
         scheduler = get_linear_schedule_with_warmup(optimizer,
                                                     num_warmup_steps=args.warmup_steps,
