@@ -23,6 +23,7 @@ parser.add_argument('--num_keys_to_add_at_a_time', default=1000000, type=int,
                     help='can only load a certain amount of data to memory at a time.')
 parser.add_argument('--starting_point', type=int, help='index to start adding keys at')
 parser.add_argument('--pca_dim', type=int, default=0, help='dimension after pca')
+parser.add_argument('--faiss-gpu', action='store_true')
 args = parser.parse_args()
 
 print(args)
@@ -45,6 +46,12 @@ if not os.path.exists(args.faiss_index+".trained"):
     if args.pca_dim > 0:
         pca_matrix = faiss.PCAMatrix(args.dimension, args.pca_dim, 0, True)
         index = faiss.IndexPreTransform(pca_matrix, index)
+
+    if args.faiss_gpu:
+        res = faiss.StandardGpuResources()
+        co = faiss.GpuClonerOptions()
+        co.useFloat16 = True
+        index = faiss.index_cpu_to_gpu(res, 0, index, co)
 
     print('Training Index')
     np.random.seed(args.seed)

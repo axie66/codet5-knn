@@ -133,7 +133,11 @@ def main():
 
     set_seed(args)
     tokenizer = RobertaTokenizer.from_pretrained('Salesforce/codet5-base')
-    if getattr(args, 'k', None):
+    if getattr(args, 'knn_attn', None):
+        model = T5AttnKNN.from_pretrained('Salesforce/codet5-base', k=32)
+        model.set_knn_dstore(KNN_Dstore(args, vocab_size=tokenizer.vocab_size, 
+            pad_idx=tokenizer.pad_token_id))
+    elif getattr(args, 'k', None):
         model = T5KNN.from_pretrained('Salesforce/codet5-base')
         model.set_knn_dstore(KNN_Dstore(args, vocab_size=tokenizer.vocab_size, 
             pad_idx=tokenizer.pad_token_id))
@@ -165,13 +169,51 @@ def main():
         # Prepare optimizer and schedule (linear warmup and decay)
         
         no_decay = ['bias', 'LayerNorm.weight']
-        optimizer_grouped_parameters = [
-            {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-                'weight_decay': args.weight_decay},
-            {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 
-                'weight_decay': 0.0}
-        ]
-        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon, weight_decay=0.0)
+        if isinstance(model, T5AttnKNN):
+            new_params = {
+                'interp_linear.bias', 'pos_embed.weight', 'knn_attn.key.weight', 
+                'interp_linear.weight', 'knn_attn.query.bias', 
+                'knn_attn.query.weight', 'knn_attn.key.bias'
+            }
+            optimizer_grouped_parameters = [
+                {
+                    'params': [p for n, p in model.named_parameters() # decay, new params
+                               if not any(nd in n for nd in no_decay) and n in new_params],
+                    'weight_decay': args.weight_decay,
+                    'lr': 5e-4,
+                },
+                {
+                    'params': [p for n, p in model.named_parameters() # no decay, new params
+                               if any(nd in n for nd in no_decay) and n in new_params],
+                    'weight_decay': 0.0,
+                    'lr': 5e-4,
+                },
+                {
+                    'params': [p for n, p in model.named_parameters() # decay, old params
+                               if not any(nd in n for nd in no_decay) and n not in new_params],
+                    'weight_decay': args.weight_decay,
+                    'lr': 1e-5,
+                },
+                {
+                    'params': [p for n, p in model.named_parameters() # no decay, old params
+                               if any(nd in n for nd in no_decay) and n not in new_params],
+                    'weight_decay': 0.0,
+                    'lr': 1e-5,
+                },
+            ]
+        else:
+            optimizer_grouped_parameters = [
+                {
+                    'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+                    'weight_decay': args.weight_decay
+                },
+                {
+                    'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 
+                    'weight_decay': 0.0
+                }
+            ]
+
+        optimizer = AdamW(optimizer_grouped_parameters, lr=0.0, eps=args.adam_epsilon, weight_decay=0.0)
         num_train_optimization_steps = args.num_train_epochs * len(train_dataloader)
         scheduler = get_linear_schedule_with_warmup(optimizer,
                                                     num_warmup_steps=args.warmup_steps,

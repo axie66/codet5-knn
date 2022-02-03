@@ -1,0 +1,15 @@
+python3 -i compute_nn.py \
+    --pretrained_path pretrained_weights/conala_codet5_base.bin \
+    --compute-train \
+    --dstore-fp16 \
+    --seed 1234 \
+    --k 32 \
+    --probe 8 \
+    --lmbda 0.05 \
+    --knn_temp 1 \
+    --dstore-size 1829724 \
+    --dstore-filename datastore/doc-mined \
+    --indexfile datastore/doc-mined_knn.index \
+    --move-dstore-to-mem \
+    --no-load-keys \
+    --faiss_gpu

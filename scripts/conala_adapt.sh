@@ -1,4 +1,4 @@
-DSTORE_TYPE="mined"
+DSTORE_TYPE="doc-mined"
 DSTORE_SIZE=1829724 # not using conala train data
 
 python3 -i train_conala.py \
@@ -18,12 +18,14 @@ python3 -i train_conala.py \
     --learning_rate 1e-4 \
     --beam_size 10 \
     --weight_decay 1e-5 \
-    --wandb \
     --max_target_length 128 \
     --k 32 \
-    --knn_gate \
+    --knn_attn \
     --dstore-fp16 \
     --dstore-size ${DSTORE_SIZE} \
     --dstore-filename datastore/${DSTORE_TYPE} \
     --indexfile datastore/${DSTORE_TYPE}_knn.index \
-    --seed 1234
+    --seed 1234 \
+    --move-dstore-to-mem \
+    --no-load-keys \
+    --faiss_gpu

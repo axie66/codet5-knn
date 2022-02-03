@@ -21,6 +21,8 @@ except:
                 index: torch.LongTensor, dim: int):
         out.scatter_(dim, index, src)
 
+import faiss_torch_utils
+
 def log_softmax(x, dim: int, onnx_trace: bool = False):
     if onnx_trace:
         return F.log_softmax(x.float(), dim=dim)
@@ -67,9 +69,9 @@ class KNN_Dstore(object):
             index_ivf.quantizer = quantizer_gpu
 
         if args.faiss_gpu:
-            co = faiss.GPUClonerOptions()
+            co = faiss.GpuClonerOptions()
             co.useFloat16 = True
-            res = faiss.StandardGPUResources()
+            res = faiss.StandardGpuResources()
             index = faiss.index_cpu_to_gpu(res, 0, index, co)
 
         index.nprobe = args.probe
@@ -109,11 +111,12 @@ class KNN_Dstore(object):
                 self.keys = self.keys_from_memmap[:]
                 self.keys = self.keys.astype(np.float16 if args.dstore_fp16 else np.float32)
 
-            del self.vals
-            self.vals_from_memmap = np.memmap(args.dstore_filename+'_vals.npy', dtype=np.int, mode='r', shape=(self.dstore_size, 1))
+            self.vals_from_memmap = self.vals
             self.vals = np.zeros((self.dstore_size, 1), dtype=np.int32 if args.dstore_fp16 else np.int64)
             self.vals = self.vals_from_memmap[:]
             self.vals = torch.from_numpy(self.vals)
+            if args.faiss_gpu:
+                self.vals = self.vals.cuda()
             print('Loading to memory took {} s'.format(time.time() - start))
         return index
 
@@ -178,14 +181,21 @@ class KNN_Dstore(object):
         batch, seq_len = queries.shape[:2]
         dists, knns = self.get_knns(queries.contiguous().view(-1, queries.size(-1)))  # [Batch * seq len, K]
 
-        nn_vals = (self.vals[knns]).long().to(queries).squeeze(-1)  # [Batch size * Seq len, K]
+        nn_vals = (self.vals[knns]).int().squeeze(-1)  # [Batch size * Seq len, K]
+        import pdb; pdb.set_trace()
         nn_vals = nn_vals.view(batch, seq_len, -1)  # [B, S, K]
         if ret_keys:
             nn_keys = torch.from_numpy(self.keys[knns]).to(queries) # [B, S, K, H]
             nn_keys = nn_keys.view(batch, seq_len, self.k, -1)
 
-        dists = torch.from_numpy(dists).view(batch, seq_len, -1).to(queries)  # [B, S, K]
-        knns = torch.from_numpy(knns).view(batch, seq_len, -1).to(queries)  # [B, S, K]
+        if isinstance(dists, np.ndarray):
+            dists = torch.from_numpy(dists).to(queries)
+        if isinstance(knns, np.ndarray):
+            knns = torch.from_numpy(dists).to(queries)
+        dists = dists.view(batch, seq_len, -1)  # [B, S, K]
+        knns = knns.view(batch, seq_len, -1)  # [B, S, K]
+
+        assert dists.device == queries.device == knns.device == nn_vals.device
 
         result = (dists, knns, nn_vals)
         if ret_keys:

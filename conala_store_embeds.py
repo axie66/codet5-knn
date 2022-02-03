@@ -1,4 +1,7 @@
 '''
+TODO: Check if I'm being an idiot
+    - are T5 decoder outputs shifted by 1?
+
 Stores each context (i.e. intent/previous tokens) as a fixed-size embedding
 
 Run with:

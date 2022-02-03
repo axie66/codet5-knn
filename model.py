@@ -42,7 +42,7 @@ class T5KNN(T5ForConditionalGeneration):
             'mined': 0
         }
 
-    def combine_probs(self, lprobs, knn_scores, lmbda=None):
+    def combine_probs(self, model_lprobs, knn_scores, lmbda=None):
         '''
         inspired by (but modified from) kNN-MT
         https://github.com/urvashik/knnmt/blob/master/fairseq/sequence_generator.py
@@ -51,7 +51,7 @@ class T5KNN(T5ForConditionalGeneration):
         # knn_scores: (batch x beams, vocab_size)
         assert lmbda is None or isinstance(lmbda, (float, list))
 
-        combined = torch.stack([lprobs, knn_scores.to(lprobs)], dim=-1)
+        combined = torch.stack([model_lprobs, knn_scores.to(lprobs)], dim=-1)
         if lmbda is None:
             lmbda = float(self.lmbda)
         if isinstance(lmbda, float):
@@ -59,7 +59,7 @@ class T5KNN(T5ForConditionalGeneration):
         else:
             lmbda = torch.tensor(lmbda)
 
-        coeffs = torch.log(lmbda.to(lprobs)).expand_as(combined)
+        coeffs = torch.log(lmbda.to(model_lprobs)).expand_as(combined)
         combined = torch.logsumexp(combined + coeffs, dim=-1)
         return combined
 
@@ -165,18 +165,28 @@ class KNNAttention(nn.Module):
         attn_value = attn_value.transpose(1, 2).reshape(bs, seq_len, -1)
         return attn_value
 
-    def forward(self, model_hidden_states, k_hidden_states, k_embeddings, attention_mask):
+    def forward(self, model_hidden_states, k_hidden_states, k_embeddings, attention_mask=None):
         """
+        TODO: fix this for k (i.e. just flatten first 2 dims and unsqueeze query vector)
+
         Args:
             `hidden_states`: [bs, seq_len, hidden_dim]
-            `k_embeddings`: [bs, seq_len, hidden_dim]
+            `k_embeddings`: [bs, seq_len, k, hidden_dim]
             attention_mask: [bs, seq_len]
+                - 1s for locations that can be attended to, 0s otherwise
         Return:
             `attn_value`: [bs, seq_len, hidden_dim]
         """
+        if attention_mask is None:
+            batch, seq_len = model_hidden_states.shape[:2]
+            attention_mask = torch.ones(batch, seq_len).to(model_hidden_states)
+        import pdb; pdb.set_trace()
         key_layer = self.transform(k_hidden_states, self.key)
         value_layer = self.transform(k_embeddings)
         query_layer = self.transform(model_hidden_states, self.query)
+        can_attend = attention_mask
+        attention_mask = torch.zeros_like(can_attend)
+        attention_mask.masked_fill_(can_attend, -1e4)
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
         # calculate the multi-head attention
         attn_value = self.attention(key_layer, query_layer, value_layer, attention_mask)
@@ -187,12 +197,18 @@ class T5AttnKNN(T5KNN):
     '''
     Attention on nearest neighbors inspired by https://arxiv.org/pdf/2102.02557.pdf
     '''
-    def __init__(self, *args, k=64, hidden_size=768, attn_heads=1, attn_dropout_prob=0.0, 
-                 key_proj=False, query_proj=False, pos_embeds=False, use_knn_keys=False):
-        super(T5AttnKNN, self).__init__()
+    def __init__(self, *args, k=64, hidden_size=768, attn_heads=1, 
+                 attn_dropout_prob=0.0, interp_prior=0.5,
+                 key_proj=False, query_proj=False, pos_embeds=False, 
+                 use_knn_keys=False, freeze_base_model=False, **kwargs):
+        super(T5AttnKNN, self).__init__(*args, **kwargs)
 
         self.k = k
         self.use_knn_keys = use_knn_keys
+
+        if freeze_base_model:
+            for param in self.parameters():
+                param.requires_grad = False
 
         self.knn_attn = KNNAttention(
             hidden_size=hidden_size, num_attention_heads=attn_heads, 
@@ -202,6 +218,10 @@ class T5AttnKNN(T5KNN):
         self.pos_embed = nn.Embedding(k, hidden_size) if pos_embeds else None
 
         self.interp_linear = nn.Linear(hidden_size, 1)
+        prior = torch.tensor(interp_prior)
+        bias_value = -torch.log((1-prior) / prior)
+        nn.init.constant_(self.interp_linear.bias, bias_value)
+
 
     def forward(self, *args, **kwargs):
         if not hasattr(self, 'dstore'):
@@ -212,14 +232,14 @@ class T5AttnKNN(T5KNN):
 
         output = super(T5KNN, self).forward(*args, **kwargs)
 
-        lprobs = output.logits[:, -1].log_softmax(dim=-1)
+        model_lprobs = output.logits[:, -1].log_softmax(dim=-1)
         if output.decoder_ffn_inputs:
-            queries = output.decoder_ffn_inputs[-1][:, -1]
+            queries = output.decoder_ffn_inputs[-1]
         else:
-            queries = output.encoder_ffn_inputs[-1][:, -1]
+            queries = output.encoder_ffn_inputs[-1]
         
         # interp_coeff: [batch, seq_len, 1]
-        interp_coeff = F.sigmoid(self.interp_linear(queries))
+        interp_coeff = torch.sigmoid(self.interp_linear(queries))
 
         _, _, nn_vals, *nn_keys = self.dstore.retrieve(queries, ret_keys=self.use_knn_keys)
         k_embeddings = self.decoder.embed_tokens(nn_vals)
@@ -242,7 +262,11 @@ class T5AttnKNN(T5KNN):
             k_embeddings=k_embeddings
         )
 
-        logits = interp_coeff * attn_output + (1 - interp_coeff) * output.logits
+        knn_lprobs = attn_output.log_softmax(dim=-1)
+
+        # logits = interp_coeff * attn_output + (1 - interp_coeff) * output.logits
+        logits = self.combine_probs(model_lprobs, knn_lprobs, lmbda=interp_coeff)
+        
         if 'labels' in kwargs:
             labels = kwargs['labels']
             loss = F.cross_entropy(logits, labels)
@@ -265,8 +289,8 @@ class T5AttnKNN(T5KNN):
             encoder_attentions=output.encoder_attentions,
             encoder_ffn_inputs=output.encoder_ffn_inputs,
             
-            model_lprobs=lprobs,
-            knn_lprobs=attn_output,
+            model_lprobs=model_lprobs,
+            knn_lprobs=knn_lprobs,
         )
 
 if __name__ == '__main__':

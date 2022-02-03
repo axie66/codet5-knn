@@ -4,8 +4,9 @@ Pre-compute nearest neighbors to save time during kNN training
 
 import os
 import argparse
+import random
 from tqdm import tqdm
-from config import add_knn_args
+from config import add_knn_args, set_seed
 
 import torch
 from knn import KNN_Dstore
@@ -22,14 +23,31 @@ device = torch.device('cuda' if cuda else 'cpu')
 
 parser = argparse.ArgumentParser()
 
+parser.add_argument('--fp16', action='store_true')
+
+parser.add_argument('--mono_min_prob', type=float, default=0.1)
+parser.add_argument('--add_lang_ids', action='store_true')
+parser.add_argument('--add_task_prefix', action='store_true')
+parser.add_argument('--batch_size', type=int, default=32)
+
+parser.add_argument('--pretrained_path', type=str, required=True)
 parser.add_argument('--compute-train', action='store_true')
 parser.add_argument('--compute-doc', action='store_true')
 parser.add_argument('--compute-mined', action='store_true')
+
+parser.add_argument('--seed', type=int, default=None)
 
 parser = add_knn_args(parser)
 
 args = parser.parse_args()
 args.faiss_gpu = cuda
+
+print(args)
+
+if args.seed is None:
+    args.seed = random.randint(0, 2**15-1)
+
+set_seed(args)
 
 model = T5ForConditionalGeneration.from_pretrained('Salesforce/codet5-base')
 tokenizer = RobertaTokenizer.from_pretrained('Salesforce/codet5-base')
@@ -46,13 +64,14 @@ dstore = KNN_Dstore(args, vocab_size=tokenizer.vocab_size, pad_idx=tokenizer.pad
 datasets = []
 
 dataset_str = []
-if args.use_train:
+if args.compute_train:
     dataset_str.append('train')
     datasets.append(Conala('conala', 'train', tokenizer, args, monolingual=False))
-if args.use_doc:
+    datasets.append(Conala('conala', 'dev', tokenizer, args, monolingual=False))
+if args.compute_doc:
     dataset_str.append('doc')
     datasets.append(Conala('conala', 'doc', tokenizer, args, monolingual=False))
-if args.use_mined:
+if args.compute_mined:
     dataset_str.append('mined')
     datasets.append(Conala('conala', 'train', tokenizer, args, monolingual=True))
 
@@ -67,7 +86,8 @@ loader = DataLoader(full_dataset, batch_size=args.batch_size, shuffle=False,
 
 lines = []
 
-nn_data = []
+nn_data = [] # tuples of distance, neighbor indices, and values
+vals = []
 
 with torch.no_grad():
     for i, data in enumerate(tqdm(loader)):
@@ -80,16 +100,19 @@ with torch.no_grad():
             ret_decoder_ffn_inp=True)
         queries = out.decoder_ffn_inputs[-1]
 
-        lengths = target_mask.sum(dim=1).cpu()
+        lengths = target_mask.sum(dim=1).cpu() - 1
 
         dists, knns, nn_vals = dstore.retrieve(queries, ret_keys=False)
 
         # data[i]: [batch, seq, k, 3]
         data = torch.stack((dists, knns, nn_vals), dim=-1)
 
-        for ex, length in zip(data, lengths):
+        for ex, length, val in zip(data, lengths, target_ids):
             nn_data.append(ex[:length])
+            vals.append(val[1:1+length])
+
+print('Num tokens:', sum(d.shape[0] for d in nn_data))
 
 if not os.path.isdir('nn_data'):
     os.mkdir('nn_data')
-torch.save(nn_data, os.path.join('nn_data', f"{dataset_str}.nn"))
+torch.save(nn_data, os.path.join('nn_data', f"{dataset_str}.bin"))
