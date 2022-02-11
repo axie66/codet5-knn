@@ -15,11 +15,13 @@ from evaluator import smooth_bleu
 from evaluator.CodeBLEU import calc_code_bleu
 from evaluator.bleu import _bleu
 from model import T5KNN, T5ForConditionalGeneration
+from knn import KNN_Dstore
 from transformers import RobertaTokenizer, AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
 cuda = torch.cuda.is_available()
 device = torch.device('cuda' if cuda else 'cpu')
+print('Using', device)
 
 try:
     import wandb
@@ -81,9 +83,9 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
             top_preds = list(preds.cpu().numpy())
             pred_ids.extend(top_preds)
 
-            if i < 10:
-                print(tokenizer.decode(top_preds[0], skip_special_tokens=True, clean_up_tokenization_spaces=False))
-                print(tokenizer.decode(batch[1][0]))
+            # if i < 10:
+            #     print(tokenizer.decode(top_preds[0], skip_special_tokens=True, clean_up_tokenization_spaces=False))
+            #     print(tokenizer.decode(batch[1][0])) 
 
     pred_nls = [tokenizer.decode(id, skip_special_tokens=True, clean_up_tokenization_spaces=False) for id in pred_ids]
 
@@ -105,11 +107,17 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
                 f1.write(gold.target.strip() + '\n')
                 f2.write(gold.source.strip() + '\n')
 
-        bleu = round(_bleu(gold_fn, output_fn), 2)
-        codebleu = calc_code_bleu.get_codebleu(gold_fn, output_fn, args.lang)
+    bleu = round(_bleu(gold_fn, output_fn), 2)
+    print('BLEU:', bleu)
+    codebleu = calc_code_bleu.get_codebleu(
+        'checkpoint/result/test_best-bleu.gold', 
+        'checkpoint/result/test_best-bleu.output',
+        'java'
+    )
+    print('CodeBLEU:', codebleu)
 
-        result = {'em': np.mean(dev_accs) * 100, 'bleu': bleu}
-        result['codebleu'] = codebleu * 100
+    result = {'em': np.mean(dev_accs) * 100, 'bleu': bleu}
+    result['codebleu'] = codebleu * 100
 
     logger.info("***** Eval results *****")
     for key in sorted(result.keys()):
@@ -126,8 +134,16 @@ def main():
 
     set_seed(args)
     tokenizer = RobertaTokenizer.from_pretrained('Salesforce/codet5-base')
-    model = T5ForConditionalGeneration.from_pretrained('Salesforce/codet5-base')
+
+    if getattr(args, 'k', 0):
+        model = T5KNN.from_pretrained('Salesforce/codet5-base')
+        model.set_knn_dstore(KNN_Dstore(args, vocab_size=tokenizer.vocab_size, 
+            pad_idx=tokenizer.pad_token_id))
+    else:
+        model = T5ForConditionalGeneration.from_pretrained('Salesforce/codet5-base')
+
     if os.path.isfile(args.model_name_or_path):
+        print('Loaded trained weights from', args.model_name_or_path)
         model.load_state_dict(torch.load(args.model_name_or_path))
     model.to(device)
 
@@ -327,10 +343,9 @@ def main():
 
         criteria = 'best-bleu'
         file = os.path.join(args.output_dir, 'checkpoint-{}/pytorch_model.bin'.format(criteria))
-        if not os.path.isfile(file):
-            file = args.model_name_or_path
-        logger.info("Reload model from {}".format(file))
-        model.load_state_dict(torch.load(file))
+        if os.path.isfile(file) and args.do_train:
+            logger.info("Reload model from {}".format(file))
+            model.load_state_dict(torch.load(file))
         eval_examples, eval_data = load_and_cache_concode_data(args, args.test_filename, tokenizer, 'test',
                                                             only_src=True, is_sample=False)
         result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'test', criteria)

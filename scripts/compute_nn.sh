@@ -3,11 +3,11 @@ python3 -i compute_nn.py \
     --compute-train \
     --dstore-fp16 \
     --seed 1234 \
-    --k 32 \
+    --k 64 \
     --probe 8 \
     --lmbda 0.05 \
     --knn_temp 1 \
-    --dstore-size 1829724 \
+    --dstore-size 1948358 \
     --dstore-filename datastore/doc-mined \
     --indexfile datastore/doc-mined_knn.index \
     --move-dstore-to-mem \

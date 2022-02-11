@@ -10,6 +10,7 @@ import warnings
 import ctypes
 try:
     import faiss
+    import faiss_torch_utils
 except:
     warnings.warn('Unable to import faiss.')
 import numpy as np
@@ -20,9 +21,7 @@ except:
     def scatter(src: torch.Tensor, out: torch.Tensor, 
                 index: torch.LongTensor, dim: int):
         out.scatter_(dim, index, src)
-
-import faiss_torch_utils
-
+        
 def log_softmax(x, dim: int, onnx_trace: bool = False):
     if onnx_trace:
         return F.log_softmax(x.float(), dim=dim)
@@ -205,21 +204,24 @@ class KNN_Dstore(object):
     def get_knn_scores_per_step(self, queries, use_dtype=torch.float32, ret_knns=False):#, knn_temp=1.0):
         qshape = queries.shape
         queries = queries.view(-1, qshape[-1])
-        dists, knns = self.get_knns(queries)
+        dists, knns = self.get_knns(queries) # (batch * beam, k)
         # (B x beam_size) x K
-        dists = torch.from_numpy(dists).type(dtype=use_dtype).cuda()
+        if isinstance(dists, np.ndarray):
+            dists = torch.from_numpy(dists).type(dtype=use_dtype).cuda()
         dists = -1 * dists / self.knn_temp # negative dists
 
-        probs = log_softmax(dists, dim=-1).type(dtype=use_dtype)
+        probs = log_softmax(dists, dim=-1).type(dtype=use_dtype) # (batch * beam, k)
 
         # (Bxbeam_size)xK
-        if self.use_faiss_only:
-            indices = torch.from_numpy(knns).long().cuda()
-        else:
+        if isinstance(knns, np.ndarray):
             indices = torch.from_numpy(self.vals[knns]).long().cuda()
+        else:
+            indices = self.vals[knns].long()
         indices = indices.view(queries.shape[0], self.k)
 
         ## TRYING SOMETHING OUT
+        # mapping: (batch * beam, k)
+        # unique_indices: (n,) where n = num unique vals in indices
         unique_indices, mapping = torch.unique(indices, return_inverse=True)
         # (Bxbeam)xKxn where n = num unique vals in indices
         knn_scores_by_index = torch.ones([indices.shape[0], indices.shape[1], len(unique_indices)], dtype=use_dtype).cuda()
@@ -241,8 +243,10 @@ class KNN_Dstore(object):
         full_knn_scores.scatter_(dim=1, index=knn_vals_by_index, src=knn_scores_by_index)
         ## TRYING SOMETHING OUT
 
+        if isinstance(knns, np.ndarray):
+            knns = torch.from_numpy(knns).cuda()
         if ret_knns:
-            return full_knn_scores, torch.from_numpy(knns).long().cuda()
+            return full_knn_scores, knns.long()
 
         return full_knn_scores
 

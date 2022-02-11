@@ -61,6 +61,8 @@ if not os.path.exists(args.faiss_index+".trained"):
     index.train(keys[random_sample].astype(np.float32))
     print('Training took {} s'.format(time.time() - start))
 
+    index = faiss.index_gpu_to_cpu(index)
+
     print('Writing index after training')
     start = time.time()
     faiss.write_index(index, args.faiss_index+".trained")

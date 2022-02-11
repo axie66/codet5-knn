@@ -42,22 +42,25 @@ class T5KNN(T5ForConditionalGeneration):
             'mined': 0
         }
 
-    def combine_probs(self, model_lprobs, knn_scores, lmbda=None):
+    @staticmethod
+    def combine_probs(model_lprobs, knn_scores, lmbda):
         '''
         inspired by (but modified from) kNN-MT
         https://github.com/urvashik/knnmt/blob/master/fairseq/sequence_generator.py
         '''
         # lprobs: (batch x beams, vocab_size)
         # knn_scores: (batch x beams, vocab_size)
-        assert lmbda is None or isinstance(lmbda, (float, list))
+        assert isinstance(lmbda, (float, list))
 
-        combined = torch.stack([model_lprobs, knn_scores.to(lprobs)], dim=-1)
+        combined = torch.stack([model_lprobs, knn_scores.to(model_lprobs)], dim=-1)
         if lmbda is None:
             lmbda = float(self.lmbda)
         if isinstance(lmbda, float):
             lmbda = torch.tensor([1 - lmbda, lmbda])
-        else:
+        elif isinstance(lmbda, list):
             lmbda = torch.tensor(lmbda)
+
+        assert isinstance(lmbda, torch.Tensor) and len(lmbda) == 2
 
         coeffs = torch.log(lmbda.to(model_lprobs)).expand_as(combined)
         combined = torch.logsumexp(combined + coeffs, dim=-1)
@@ -89,7 +92,7 @@ class T5KNN(T5ForConditionalGeneration):
         # self.counts['doc'] += int((knn_types == 1).sum().cpu())
         # self.counts['mined'] += int((knn_types == 0).sum().cpu())
 
-        combined_logits = self.combine_probs(lprobs, knn_scores)
+        combined_logits = self.combine_probs(lprobs, knn_scores, lmbda=self.lmbda)
         output.logits[:, -1] = combined_logits
 
         return KNNSeq2SeqLMOutput(

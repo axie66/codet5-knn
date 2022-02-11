@@ -13,3 +13,4 @@ data/conala/train_monolingual.jsonl
 data/conala/*.bin
 datastore
 wandb
+nn_data

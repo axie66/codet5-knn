@@ -34,6 +34,7 @@ parser.add_argument('--pretrained_path', type=str, required=True)
 parser.add_argument('--compute-train', action='store_true')
 parser.add_argument('--compute-doc', action='store_true')
 parser.add_argument('--compute-mined', action='store_true')
+parser.add_argument('--compute-test', action='store_true')
 
 parser.add_argument('--seed', type=int, default=None)
 
@@ -74,6 +75,9 @@ if args.compute_doc:
 if args.compute_mined:
     dataset_str.append('mined')
     datasets.append(Conala('conala', 'train', tokenizer, args, monolingual=True))
+if args.compute_test:
+    dataset_str.append('test')
+    datasets.append(Conala('conala', 'test', tokenizer, args, monolingual=False))
 
 dataset_str = '-'.join(dataset_str)
 
@@ -100,11 +104,11 @@ with torch.no_grad():
             ret_decoder_ffn_inp=True)
         queries = out.decoder_ffn_inputs[-1]
 
-        lengths = target_mask.sum(dim=1).cpu() - 1
+        lengths = target_mask.sum(dim=1).cpu()
 
         dists, knns, nn_vals = dstore.retrieve(queries, ret_keys=False)
 
-        # data[i]: [batch, seq, k, 3]
+        # data[i]: [seq, k, 3], where dim 3 is (distance, neighbor indices, values)
         data = torch.stack((dists, knns, nn_vals), dim=-1)
 
         for ex, length, val in zip(data, lengths, target_ids):

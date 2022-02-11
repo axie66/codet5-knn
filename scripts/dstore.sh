@@ -1,11 +1,18 @@
+DSTORE_NAME='concode'
+DSTORE_SIZE=3535137
+
+# DSTORE_NAME='doc-mined'
+# DSTORE_SIZE=1948358
+
 python3 build_dstore.py \
-   --dstore_mmap datastore/doc-mined \
-   --dstore_size 1829724 \
+   --dstore_mmap datastore/${DSTORE_NAME} \
+   --dstore_size ${DSTORE_SIZE} \
    --dimension 768 \
-   --faiss_index datastore/doc-mined_knn.index \
+   --faiss_index datastore/${DSTORE_NAME}_knn.index \
    --num_keys_to_add_at_a_time 500000 \
    --starting_point 0 \
    --dstore_fp16 \
+   --faiss-gpu \
    --ncentroids 4096
 
 # python3 build_dstore.py \

@@ -68,6 +68,38 @@ def train_epoch(args, model, train_dataloader, tokenizer, optimizer, scheduler,
     return epoch_stats, global_step
 
 
+def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
+    eval_dataloader = DataLoader(eval_data, shuffle=False, batch_size=args.batch_size,
+                                 num_workers=4 if cuda else 0, collate_fn=preprocess_batch_conala)
+    # Start evaluating model
+    logger.info("  " + "***** Running ppl evaluation *****")
+    logger.info("  Num examples = %d", len(eval_examples))
+    logger.info("  Batch size = %d", args.batch_size)
+
+    model.eval()
+    eval_loss, batch_num = 0, 0
+    for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval ppl"):
+        source_ids = batch['source']['input_ids'].to(device)
+        target_ids = batch['target']['input_ids'].to(device)
+        source_mask = batch['source']['attention_mask'].to(device)
+        target_mask = batch['target']['attention_mask'].to(device)
+
+        with torch.no_grad():
+            if args.model_type == 'roberta':
+                loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
+                                   target_ids=target_ids, target_mask=target_mask)
+            else:
+                outputs = model(input_ids=source_ids, attention_mask=source_mask,
+                                labels=target_ids, decoder_attention_mask=target_mask)
+                loss = outputs.loss
+
+        eval_loss += loss.item()
+        batch_num += 1
+    eval_loss = eval_loss / batch_num
+    eval_ppl = round(np.exp(eval_loss), 5)
+    return eval_ppl, eval_loss
+
+
 def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag, criteria):
     logger.info("  ***** Running bleu evaluation on {} data*****".format(split_tag))
     logger.info("  Num examples = %d", len(eval_examples))
@@ -144,7 +176,7 @@ def main():
     else:
         model = T5ForConditionalGeneration.from_pretrained('Salesforce/codet5-base')
     if os.path.isfile(args.model_name_or_path):
-        print('Loaded pretrained weights from', args.model_name_or_path)
+        print('Loaded trained weights from', args.model_name_or_path)
         model.load_state_dict(torch.load(args.model_name_or_path))
 
     print("Using model of type", type(model))
@@ -245,8 +277,6 @@ def main():
                 epoch_stats['dev_bleu'] = dev_bleu
                 epoch_stats['dev_em'] = dev_em
                 epoch_stats['dev_bleu_em'] = dev_bleu_em
-                # Causes circular reference for some reason???
-                # epoch_stats['text'] = wandb.Table(data=sampled_texts, columns=['Intent', 'GT', 'Pred'])
 
                 if dev_bleu_em > best_bleu_em:
                     not_bleu_em_inc_cnt = 0
@@ -294,18 +324,24 @@ def main():
         criteria = 'best-bleu'
         file = os.path.join(args.output_dir, 'checkpoint-{}/pytorch_model.bin'.format(criteria))
 
-        if os.path.isfile(file):
+        if os.path.isfile(file) and args.do_train:
             logger.info("Reload model from {}".format(file))
             model.load_state_dict(torch.load(file))
 
         train_data, valid_data, test_data = load_conala_dataset(args, tokenizer)
 
+        # perplexity
+        test_ppl, test_loss = eval_ppl_epoch(args, test_data, test_data.data, model, tokenizer)
+        logger.info(f'ppl: {test_ppl}, loss: {test_loss}')
+
+        # bleu
         result, sampled_texts = eval_bleu_epoch(args, test_data, test_data.data, model, tokenizer, 'test', criteria)
         test_bleu, test_em = result['bleu'], result['em']
         test_codebleu = result['codebleu'] if 'codebleu' in result else 0
         result_str = "[%s] bleu-4: %.2f, em: %.4f, codebleu: %.4f\n" % (criteria, test_bleu, test_em, test_codebleu)
         logger.info(result_str)
         fa.write(result_str)
+
         if args.res_fn:
             with open(args.res_fn, 'a+') as f:
                 f.write('[Time: {}] {}\n'.format(get_elapse_time(t0), file))
@@ -315,6 +351,7 @@ def main():
                 **result,
                 'outputs': wandb.Table(data=sampled_texts, columns=['Intent', 'GT', 'Pred']),
             })
+
     logger.info("Finish and take {}".format(get_elapse_time(t0)))
     fa.write("Finish and take {}".format(get_elapse_time(t0)))
     fa.close()
