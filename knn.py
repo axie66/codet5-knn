@@ -181,7 +181,6 @@ class KNN_Dstore(object):
         dists, knns = self.get_knns(queries.contiguous().view(-1, queries.size(-1)))  # [Batch * seq len, K]
 
         nn_vals = (self.vals[knns]).int().squeeze(-1)  # [Batch size * Seq len, K]
-        import pdb; pdb.set_trace()
         nn_vals = nn_vals.view(batch, seq_len, -1)  # [B, S, K]
         if ret_keys:
             nn_keys = torch.from_numpy(self.keys[knns]).to(queries) # [B, S, K, H]

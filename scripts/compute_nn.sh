@@ -1,6 +1,6 @@
 python3 -i compute_nn.py \
     --pretrained_path pretrained_weights/conala_codet5_base.bin \
-    --compute-train \
+    --compute-test \
     --dstore-fp16 \
     --seed 1234 \
     --k 64 \

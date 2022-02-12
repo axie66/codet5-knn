@@ -11,6 +11,9 @@ data/conala/conala-corpus
 data/conala/*.json
 data/conala/train_monolingual.jsonl
 data/conala/*.bin
+data/csn_sum
 datastore
 wandb
 nn_data
+
+pretrained_weights/concode_codet5_base.bin

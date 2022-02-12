@@ -11,7 +11,6 @@ from torch.nn.utils.rnn import pad_sequence
 from babel.numbers import parse_decimal, NumberFormatError
 import re
 import unicodedata
-from knn import log_softmax
 
 num_re = re.compile(r'[-+]?\d*\.\d+|\d+')
 
@@ -248,7 +247,7 @@ def compute_loss(args, data, model, target_input=None, no_context_update=False, 
     )
 
     if test and args.knn:
-        lprobs = log_softmax(logits, dim=-1)
+        lprobs = F.log_softmax(logits, dim=-1)
         query = last_ffn[:, -1:]
         knn_scores = model.get_knn_scores_per_step(query, save_knns=print_nn)
         if print_nn:

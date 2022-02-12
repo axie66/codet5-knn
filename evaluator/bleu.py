@@ -127,7 +127,6 @@ def _add_suffix_ngrams_dict(ngrams_dict: Dict[Tuple[int, ...], int],
         ngram = tuple(sentence[start_idx:end_idx])
         ngrams_dict[ngram] = ngrams_dict.get(ngram, 0) + 1
 
-
 def _get_suffix_ngrams_list(sentence: List[int], end_idx: int, 
                             max_order=4) -> List[Tuple[int,...]]:
     return [tuple(sentence[start_idx:end_idx]) for start_idx in range(max(0, end_idx - max_order), end_idx)]
@@ -169,8 +168,7 @@ def compute_pair_bleu_all_prefixes(reference: List[int], translation: List[int],
         possible_match_matrix, ratio_matrix, trans_suffix_ngrams, 
         max_order=max_order, smoothed=smoothed)
 
-# import numba
-# @numba.jit
+
 def _compute_pair_bleu_all_prefixes(reference: List[int], translation: List[int],
                                     possible_match_matrix: np.ndarray,
                                     ratio_matrix: np.ndarray,
@@ -207,9 +205,6 @@ def _compute_pair_bleu_all_prefixes(reference: List[int], translation: List[int]
                     # count_overlaps[len(ngram) - 1] += 1
                     used_ngrams[ngram] = used_count + 1
                     match_matrix[ref_len, trans_len, len(ngram)-1] += 1
-                elif ref_count and used_count >= ref_count:
-                    print(ngram, 'not counted', ref_count, used_count)
-            # match_matrix[ref_len, trans_len, :] = count_overlaps
 
     if smoothed:
         # with smoothing
@@ -229,7 +224,7 @@ def _compute_pair_bleu_all_prefixes(reference: List[int], translation: List[int]
     bp = np.exp(1 - 1 / ratio_matrix)
 
     bleu = geo_mean * bp
-    return bleu, precisions[-1, -1]
+    return bleu
 
 
 def _bleu(ref_file, trans_file, subword_option=None):
@@ -293,6 +288,3 @@ if __name__ == '__main__':
     print(gt_bleu)
 
     print('close to ground truth?', np.allclose(gt_bleu, b))
-
-    print(compute_bleu([[reference[:ref_len]]], [translation[:trans_len]], smooth=False, max_order=3))
-    print(x)

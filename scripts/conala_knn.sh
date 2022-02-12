@@ -30,10 +30,10 @@ python3 -i train_conala.py \
     --max_target_length 128 \
     --seed 1234 \
     --dstore-fp16 \
-    --k 4 \
-    --probe 8 \
+    --k 8 \
+    --probe 32 \
     --lmbda 0.05 \
-    --knn_temp 10.0 \
+    --knn_temp 100.0 \
     --dstore-size ${DSTORE_SIZE} \
     --dstore-filename datastore/${DSTORE_TYPE} \
     --indexfile datastore/${DSTORE_TYPE}_knn.index \

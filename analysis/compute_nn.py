@@ -113,7 +113,7 @@ with torch.no_grad():
 
         for ex, length, val in zip(data, lengths, target_ids):
             nn_data.append(ex[:length])
-            vals.append(val[1:1+length])
+            vals.append(val[:length])
 
 print('Num tokens:', sum(d.shape[0] for d in nn_data))
 

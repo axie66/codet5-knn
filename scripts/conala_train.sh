@@ -16,7 +16,6 @@ python3 -i train_conala.py \
     --learning_rate 5e-5 \
     --beam_size 10 \
     --weight_decay 1e-5 \
-    --wandb \
     --max_target_length 512 \
     --k 0 \
     --seed 12761

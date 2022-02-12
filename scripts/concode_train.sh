@@ -1,15 +1,15 @@
-python3 -i train.py \
+python3 -i train_concode.py \
     --task concode \
     --lang java \
+    --add_task_prefix \
+    --add_lang_ids \
     --data_dir data/concode/dataset/concode \
     --cache_path data/concode \
     --summary_dir checkpoint/summary \
     --res_dir checkpoint/result \
     --output_dir checkpoint/output \
-    --model_name_or_path checkpoint/weights/concode_codet5_base.bin \
+    --model_name_or_path pretrained_weights/concode_codet5_base.bin \
     --do_test \
-    --do_train \
-    --do_eval \
     --num_train_epochs 30 \
     --batch_size 8 \
     --learning_rate 1e-4 \
