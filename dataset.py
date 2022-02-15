@@ -89,6 +89,26 @@ def read_concode_examples(filename, data_num):
                 break
     return examples
 
+def read_csn_examples(filename, data_num):
+    """Read CodeSearchNet summarization examples from filename."""
+    examples = []
+
+    with open(filename) as f:
+        for idx, line in enumerate(tqdm(f)):
+            x = json.loads(line)
+            examples.append(
+                Example(
+                    idx=idx,
+                    source=' '.join(x["docstring_tokens"]),
+                    # TODO: not sure if this is ok since it omits whitespaces
+                    target=' '.join(x["code_tokens"]),
+                )
+            )
+            idx += 1
+            if idx == data_num:
+                break
+    return examples
+
 def add_lang_by_task(target_str, task, sub_task):
     if task == 'summarize':
         target_str = '<en> ' + target_str
@@ -101,6 +121,11 @@ def add_lang_by_task(target_str, task, sub_task):
             target_str = '<java> ' + target_str
     elif task == 'concode':
         target_str = '<java> ' + target_str
+    elif task == 'csn':
+        if sub_task == 'csn_python':
+            target_str = '<python> ' + target_str
+        elif sub_task == 'csn_java':
+            target_str = '<java> ' + target_str
     elif task == 'defect':
         target_str = target_str
     return target_str
@@ -141,14 +166,19 @@ def convert_examples_to_features(item):
         url=example.url
     )
 
-def load_and_cache_concode_data(args, filename, tokenizer, split_tag, only_src=False, is_sample=False):
+def load_and_cache_data(args, filename, tokenizer, split_tag, only_src=False, is_sample=False):
     # cache the data into args.cache_path except it is sampled
     # only_src: control whether to return only source ids for bleu evaluating (dev/test)
     # return: examples (Example object), data (TensorDataset)
     data_tag = '_all' if args.data_num == -1 else '_%d' % args.data_num
     cache_fn = '{}/{}.pt'.format(args.cache_path, split_tag + ('_src' if only_src else '') + data_tag)
 
-    examples = read_concode_examples(filename, args.data_num)
+    if args.task == 'concode':
+        examples = read_concode_examples(filename, args.data_num)
+    elif args.task == 'csn':
+        examples = read_csn_examples(filename, args.data_num)
+    else:
+        raise Exception("Invalid dataset name")
 
     if is_sample:
         examples = random.sample(examples, min(5000, len(examples)))

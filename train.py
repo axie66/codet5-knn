@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from dataset import load_and_cache_concode_data, get_elapse_time, preprocess_batch_concode
+from dataset import load_and_cache_data, get_elapse_time, preprocess_batch_concode
 from config import add_args, add_knn_args, parse_args, set_seed
 from evaluator import smooth_bleu
 from evaluator.CodeBLEU import calc_code_bleu
@@ -154,7 +154,7 @@ def main():
             wandb.init('codet5-knn', config=vars(args))
 
         # Prepare training data loader
-        train_examples, train_data = load_and_cache_concode_data(args, args.train_filename, tokenizer, 'train')
+        train_examples, train_data = load_and_cache_data(args, args.train_filename, tokenizer, 'train')
         train_dataloader = DataLoader(train_data, shuffle=True, batch_size=args.batch_size,
                                       num_workers=4 if cuda else 0, collate_fn=preprocess_batch_concode)
 
@@ -230,7 +230,7 @@ def main():
                 if 'dev_loss' in dev_dataset:
                     eval_examples, eval_data = dev_dataset['dev_loss']
                 else:
-                    eval_examples, eval_data = load_and_cache_concode_data(args, args.dev_filename, tokenizer, 'dev')
+                    eval_examples, eval_data = load_and_cache_data(args, args.dev_filename, tokenizer, 'dev')
                     dev_dataset['dev_loss'] = eval_examples, eval_data
 
                 eval_ppl = eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer)
@@ -282,7 +282,7 @@ def main():
                 torch.cuda.empty_cache()
 
                 if args.do_eval_bleu:
-                    eval_examples, eval_data = load_and_cache_concode_data(args, args.dev_filename, tokenizer, 'dev',
+                    eval_examples, eval_data = load_and_cache_data(args, args.dev_filename, tokenizer, 'dev',
                                                                        only_src=True, is_sample=True)
 
                     result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'dev', 'e%d' % cur_epoch)
@@ -346,7 +346,7 @@ def main():
         if os.path.isfile(file) and args.do_train:
             logger.info("Reload model from {}".format(file))
             model.load_state_dict(torch.load(file))
-        eval_examples, eval_data = load_and_cache_concode_data(args, args.test_filename, tokenizer, 'test',
+        eval_examples, eval_data = load_and_cache_data(args, args.test_filename, tokenizer, 'test',
                                                             only_src=True, is_sample=False)
         result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'test', criteria)
         test_bleu, test_em = result['bleu'], result['em']
