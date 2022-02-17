@@ -67,7 +67,7 @@ def get_knn_contexts(knn_retrievals, test_idx, prefix_length, limit=10):
     knn_contexts = []
     for _, neighbor_idx, v in knn_ret[:limit]:
         dstore_idx, length = neighbor2example[int(neighbor_idx)]
-        *ctx, val = get_from_datasets(dstore_idx, doc_data, mined_data)['snippet']['input_ids'][:length+1]
+        *ctx, val = get_from_datasets(dstore_idx, doc_data, mined_data)['snippet']['input_ids'][1:length+1]
         assert val == v
         knn_contexts.append(
             (tokenizer.decode(ctx), tokenizer.decode(val))
@@ -144,14 +144,14 @@ for i in range(500):
         output_file.write(f"\t[{prefix_length+1}] Context: {tokenizer.decode(snippet[:prefix_length+1])}\n")
         bleu_contexts = get_bleu_contexts(bleu_retrievals, i, prefix_length+1, limit=10)
         knn_contexts = get_knn_contexts(knn_retrievals, i, prefix_length+1, limit=10)
-        if len(bleu_contexts) == 0:
-            output_file.write('\tNo BLEU retrievals, skipping...\n')
-            continue
         output_file.write('\tBLEU retrievals:\n')
-        output_file.write('\n'.join(
-            f'\t\t({i}) {repr(ctx)} ==> {repr(val)}' for i, (ctx, val) in enumerate(bleu_contexts)
-        ))
-        output_file.write('\n')
+        if len(bleu_contexts) == 0:
+            output_file.write('\t\tNo BLEU retrievals\n')
+        else:
+            output_file.write('\n'.join(
+                f'\t\t({i}) {repr(ctx)} ==> {repr(val)}' for i, (ctx, val) in enumerate(bleu_contexts)
+            ))
+            output_file.write('\n')
         output_file.write('\tkNN retrievals:\n')
         output_file.write('\n'.join(
             f'\t\t({i}) {repr(ctx)} ==> {repr(val)}' for i, (ctx, val) in enumerate(knn_contexts)
@@ -160,7 +160,7 @@ for i in range(500):
 
     output_file.write('\n' + '*' * 16 + '\n')
 
-
+output_file.close()
 # num_neighbors = [np.array([len(n) for n in x]) for x in bleu_retrievals]
 
 # neigh_counts = np.zeros(max(len(n) for n in num_neighbors))

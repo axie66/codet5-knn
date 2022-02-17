@@ -17,6 +17,7 @@ python3 -i train_conala.py \
     --beam_size 10 \
     --weight_decay 1e-5 \
     --max_target_length 512 \
+    --warmup_steps 100 \
     --k 0 \
     --seed 12761
 # done

@@ -38,11 +38,13 @@ def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
 
     model.eval()
     eval_loss, batch_num = 0, 0
-    for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval ppl"):
+    for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval ppl", disable=args.no_tqdm):
         batch = tuple(t.to(device) for t in batch)
         source_ids, target_ids = batch
         source_mask = source_ids.ne(tokenizer.pad_token_id)
         target_mask = target_ids.ne(tokenizer.pad_token_id)
+
+        target_ids.masked_fill_(target_mask == 0, value=-100)
 
         with torch.no_grad():
             if args.model_type == 'roberta':
@@ -70,7 +72,7 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
     model.eval()
     pred_ids = []
     bleu, codebleu = 0.0, 0.0
-    for i, batch in enumerate(tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval bleu for {} set".format(split_tag))):
+    for i, batch in enumerate(tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval bleu for {} set".format(split_tag), disable=args.no_tqdm)):
         source_ids = batch[0].to(device)
         source_mask = source_ids.ne(tokenizer.pad_token_id)
         with torch.no_grad():
@@ -94,7 +96,9 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
     src_fn = os.path.join(args.res_dir, "test_{}.src".format(criteria))
 
     dev_accs, predictions = [], []
-    with open(output_fn, 'w') as f, open(gold_fn, 'w') as f1, open(src_fn, 'w') as f2:
+    with open(output_fn, 'w', encoding='utf-8') as f, \
+         open(gold_fn, 'w', encoding='utf-8') as f1,\
+         open(src_fn, 'w', encoding='utf-8') as f2:
         for pred_nl, gold in zip(pred_nls, eval_examples):
             dev_accs.append(pred_nl.strip() == gold.target.strip())
             if args.task in ['summarize']:
@@ -107,14 +111,22 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
                 f1.write(gold.target.strip() + '\n')
                 f2.write(gold.source.strip() + '\n')
 
-    bleu = round(_bleu(gold_fn, output_fn), 2)
-    print('BLEU:', bleu)
-    codebleu = calc_code_bleu.get_codebleu(
-        'checkpoint/result/test_best-bleu.gold', 
-        'checkpoint/result/test_best-bleu.output',
-        'java'
-    )
-    print('CodeBLEU:', codebleu)
+    try:
+        bleu = round(_bleu(gold_fn, output_fn), 2)
+        print('BLEU:', bleu)
+    except Exception as e:
+        print('Unable to compute BLEU:', e)
+        bleu = 0.0
+    try:
+        codebleu = calc_code_bleu.get_codebleu(
+            gold_fn, 
+            output_fn,
+            'java'
+        )
+        print('CodeBLEU:', codebleu)
+    except Exception as e:
+        print('Unable to compute CodeBLEU:', e)
+        codebleu = 0.0
 
     result = {'em': np.mean(dev_accs) * 100, 'bleu': bleu}
     result['codebleu'] = codebleu * 100
@@ -184,7 +196,7 @@ def main():
         not_loss_dec_cnt, not_bleu_em_inc_cnt = 0, 0 if args.do_eval_bleu else 1e6
 
         for cur_epoch in range(args.start_epoch, int(args.num_train_epochs)):
-            bar = tqdm(train_dataloader, total=len(train_dataloader), desc="Training")
+            bar = tqdm(train_dataloader, total=len(train_dataloader), desc="Training", disable=args.no_tqdm)
             nb_tr_examples, nb_tr_steps, tr_loss = 0, 0, 0
             model.train()
 
@@ -195,6 +207,8 @@ def main():
                 source_ids, target_ids = batch
                 source_mask = source_ids.ne(tokenizer.pad_token_id)
                 target_mask = target_ids.ne(tokenizer.pad_token_id)
+
+                target_ids.masked_fill_(target_mask == 0, value=-100)
 
                 if args.model_type == 'roberta':
                     loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
@@ -282,11 +296,14 @@ def main():
                 torch.cuda.empty_cache()
 
                 if args.do_eval_bleu:
-                    eval_examples, eval_data = load_and_cache_data(args, args.dev_filename, tokenizer, 'dev',
-                                                                       only_src=True, is_sample=True)
+                    eval_examples, eval_data = load_and_cache_data(
+                        args, args.dev_filename, tokenizer, 'dev', 
+                        is_sample=True
+                    )
 
                     result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'dev', 'e%d' % cur_epoch)
-                    dev_bleu, dev_em = result['bleu'], result['em']
+
+                    dev_bleu, dev_em = result.get('bleu', 0), result.get('em', 0)
                     if args.task in ['summarize']:
                         dev_bleu_em = dev_bleu
                     elif args.task in ['defect']:

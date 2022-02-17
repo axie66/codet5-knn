@@ -7,10 +7,10 @@ import argparse
 import numpy as np
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ChainDataset
 
 from data.conala.evaluation.compute_eval_metrics import compute_metric
-from dataset import get_elapse_time, load_conala_dataset, preprocess_batch_conala
+from dataset import get_elapse_time, load_conala_dataset, preprocess_batch_conala, Conala
 from config import add_args, add_knn_args, parse_args, set_seed
 from knn import KNN_Dstore
 
@@ -41,6 +41,8 @@ def train_epoch(args, model, train_dataloader, tokenizer, optimizer, scheduler,
         target_ids = batch['target']['input_ids'].to(device)
         source_mask = batch['source']['attention_mask'].to(device)
         target_mask = batch['target']['attention_mask'].to(device)
+
+        target_ids.masked_fill_(target_mask == 0, value=-100)
 
         outputs = model(input_ids=source_ids, attention_mask=source_mask,
                         labels=target_ids, decoder_attention_mask=target_mask)
@@ -83,6 +85,8 @@ def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
         target_ids = batch['target']['input_ids'].to(device)
         source_mask = batch['source']['attention_mask'].to(device)
         target_mask = batch['target']['attention_mask'].to(device)
+
+        target_ids.masked_fill_(target_mask == 0, value=-100)
 
         with torch.no_grad():
             if args.model_type == 'roberta':
@@ -190,9 +194,13 @@ def main():
     if args.do_train:
         # Prepare data loaders
         train_data, valid_data, test_data = load_conala_dataset(args, tokenizer)
+        # mined_data = Conala('conala', 'train', tokenizer, args, monolingual=True)
+
+        # train_data = ChainDataset((train_data, mined_data))
 
         train_dataloader = DataLoader(train_data, shuffle=True, batch_size=args.batch_size,
                                       collate_fn=preprocess_batch_conala, num_workers=4 if cuda else 0)
+
         valid_dataloader = DataLoader(valid_data, shuffle=False, batch_size=args.batch_size,
                                       collate_fn=preprocess_batch_conala, num_workers=4 if cuda else 0)
         test_dataloader = DataLoader(test_data, shuffle=False, batch_size=args.batch_size,
@@ -201,51 +209,18 @@ def main():
         # Prepare optimizer and schedule (linear warmup and decay)
         
         no_decay = ['bias', 'LayerNorm.weight']
-        if isinstance(model, T5AttnKNN):
-            new_params = {
-                'interp_linear.bias', 'pos_embed.weight', 'knn_attn.key.weight', 
-                'interp_linear.weight', 'knn_attn.query.bias', 
-                'knn_attn.query.weight', 'knn_attn.key.bias'
+        optimizer_grouped_parameters = [
+            {
+                'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+                'weight_decay': args.weight_decay
+            },
+            {
+                'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 
+                'weight_decay': 0.0
             }
-            optimizer_grouped_parameters = [
-                {
-                    'params': [p for n, p in model.named_parameters() # decay, new params
-                               if not any(nd in n for nd in no_decay) and n in new_params],
-                    'weight_decay': args.weight_decay,
-                    'lr': 5e-4,
-                },
-                {
-                    'params': [p for n, p in model.named_parameters() # no decay, new params
-                               if any(nd in n for nd in no_decay) and n in new_params],
-                    'weight_decay': 0.0,
-                    'lr': 5e-4,
-                },
-                {
-                    'params': [p for n, p in model.named_parameters() # decay, old params
-                               if not any(nd in n for nd in no_decay) and n not in new_params],
-                    'weight_decay': args.weight_decay,
-                    'lr': 1e-5,
-                },
-                {
-                    'params': [p for n, p in model.named_parameters() # no decay, old params
-                               if any(nd in n for nd in no_decay) and n not in new_params],
-                    'weight_decay': 0.0,
-                    'lr': 1e-5,
-                },
-            ]
-        else:
-            optimizer_grouped_parameters = [
-                {
-                    'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-                    'weight_decay': args.weight_decay
-                },
-                {
-                    'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 
-                    'weight_decay': 0.0
-                }
-            ]
+        ]
 
-        optimizer = AdamW(optimizer_grouped_parameters, lr=0.0, eps=args.adam_epsilon, weight_decay=0.0)
+        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon, weight_decay=0.0)
         num_train_optimization_steps = args.num_train_epochs * len(train_dataloader)
         scheduler = get_linear_schedule_with_warmup(optimizer,
                                                     num_warmup_steps=args.warmup_steps,

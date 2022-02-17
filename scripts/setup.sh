@@ -1,0 +1,1 @@
+pip install tree_sitter==0.2.2 wandb babel wget faiss-gpu matplotlib astor nltk

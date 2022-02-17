@@ -6,12 +6,14 @@ import torch
 
 def add_args(parser):
     parser.add_argument("--task", type=str, required=True,
-                        choices=['summarize', 'concode', 'translate', 'refine', 'defect', 'clone', 'conala'])
+                        choices=['summarize', 'concode', 'translate', 'refine', 'defect', 'clone', 'conala', 'csn'])
     parser.add_argument("--sub_task", type=str, default='')
     parser.add_argument("--lang", type=str, default='')
     parser.add_argument("--eval_task", type=str, default='')
     parser.add_argument("--model_type", default="codet5", type=str, choices=['roberta', 'bart', 'codet5'])
     parser.add_argument("--data_num", default=-1, type=int)
+
+    parser.add_argument('--no_tqdm', action='store_true')
     
     parser.add_argument("--add_lang_ids", action='store_true')
     parser.add_argument("--add_task_prefix", action='store_true', help="Whether to add task prefix for t5 and codet5")
@@ -162,11 +164,18 @@ def parse_args(parser):
     if args.seed is None:
         args.seed = random.randint(0, 2**15-1)
 
-    if args.task in ['summarize']:
+    if args.task == 'csn':
+        if args.sub_task == 'csn_python':
+            args.lang = 'python'
+        elif args.sub_task == 'csn_java':
+            args.lang = 'java'
+        else:
+            raise Exception("Unknown subtask")
+    elif args.task in ['summarize']:
         args.lang = args.sub_task
     elif args.task in ['refine', 'concode', 'clone']:
         args.lang = 'java'
-    elif args.task == 'conala':
+    elif args.task in ['conala']:
         args.lang = 'python'
     elif args.task == 'defect':
         args.lang = 'c'

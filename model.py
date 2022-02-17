@@ -53,8 +53,6 @@ class T5KNN(T5ForConditionalGeneration):
         assert isinstance(lmbda, (float, list))
 
         combined = torch.stack([model_lprobs, knn_scores.to(model_lprobs)], dim=-1)
-        if lmbda is None:
-            lmbda = float(self.lmbda)
         if isinstance(lmbda, float):
             lmbda = torch.tensor([1 - lmbda, lmbda])
         elif isinstance(lmbda, list):
@@ -173,17 +171,23 @@ class KNNAttention(nn.Module):
         TODO: fix this for k (i.e. just flatten first 2 dims and unsqueeze query vector)
 
         Args:
-            `hidden_states`: [bs, seq_len, hidden_dim]
+            `model_hidden_states`: [bs, seq_len, hidden_dim]
+            `k_hidden_states`: [bs, seq_len, k, hidden_dim]
             `k_embeddings`: [bs, seq_len, k, hidden_dim]
-            attention_mask: [bs, seq_len]
+            `attention_mask`: [bs, seq_len]
                 - 1s for locations that can be attended to, 0s otherwise
+
         Return:
             `attn_value`: [bs, seq_len, hidden_dim]
         """
+        orig_batch, orig_seq_len, hidden_dim = model_hidden_states.shape
+        model_hidden_states = model_hidden_states.reshape(orig_batch * orig_seq_len, 1, hidden_dim)
+        k_hidden_states = k_hidden_states.reshape(orig_batch * orig_seq_len, -1, hidden_dim)
+        k_embeddings = k_embeddings.reshape(orig_batch * orig_seq_len, -1, hidden_dim)
+
         if attention_mask is None:
-            batch, seq_len = model_hidden_states.shape[:2]
-            attention_mask = torch.ones(batch, seq_len).to(model_hidden_states)
-        import pdb; pdb.set_trace()
+            attention_mask = torch.ones(orig_batch, orig_seq_len).to(model_hidden_states)
+
         key_layer = self.transform(k_hidden_states, self.key)
         value_layer = self.transform(k_embeddings)
         query_layer = self.transform(model_hidden_states, self.query)
@@ -193,6 +197,8 @@ class KNNAttention(nn.Module):
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
         # calculate the multi-head attention
         attn_value = self.attention(key_layer, query_layer, value_layer, attention_mask)
+
+        attn_value = attn_value.squeeze(-2).reshape(orig_batch, orig_seq_len, hidden_dim)
         return attn_value
 
 
@@ -201,7 +207,7 @@ class T5AttnKNN(T5KNN):
     Attention on nearest neighbors inspired by https://arxiv.org/pdf/2102.02557.pdf
     '''
     def __init__(self, *args, k=64, hidden_size=768, attn_heads=1, 
-                 attn_dropout_prob=0.0, interp_prior=0.5,
+                 attn_dropout_prob=0.0, interp_prior=0.5, use_attn=True,
                  key_proj=False, query_proj=False, pos_embeds=False, 
                  use_knn_keys=False, freeze_base_model=False, **kwargs):
         super(T5AttnKNN, self).__init__(*args, **kwargs)
@@ -215,8 +221,8 @@ class T5AttnKNN(T5KNN):
 
         self.knn_attn = KNNAttention(
             hidden_size=hidden_size, num_attention_heads=attn_heads, 
-            dropout_prob=attn_dropout_prob, key_proj=key_proj, query_proj=query_proj
-        )
+            dropout_prob=attn_dropout_prob, key_proj=key_proj, query_proj=query_proj,
+        ) if use_attn else None
 
         self.pos_embed = nn.Embedding(k, hidden_size) if pos_embeds else None
 
@@ -224,7 +230,6 @@ class T5AttnKNN(T5KNN):
         prior = torch.tensor(interp_prior)
         bias_value = -torch.log((1-prior) / prior)
         nn.init.constant_(self.interp_linear.bias, bias_value)
-
 
     def forward(self, *args, **kwargs):
         if not hasattr(self, 'dstore'):
@@ -244,35 +249,41 @@ class T5AttnKNN(T5KNN):
         # interp_coeff: [batch, seq_len, 1]
         interp_coeff = torch.sigmoid(self.interp_linear(queries))
 
-        _, _, nn_vals, *nn_keys = self.dstore.retrieve(queries, ret_keys=self.use_knn_keys)
-        k_embeddings = self.decoder.embed_tokens(nn_vals)
 
-        if self.use_knn_keys:
-            k_hidden_states = nn_keys[0]
+        if self.knn_attn is not None:
+            _, _, nn_vals, *nn_keys = self.dstore.retrieve(queries, ret_keys=self.use_knn_keys)
+
+            k_embeddings = self.decoder.embed_tokens(nn_vals)
+
+            if self.use_knn_keys:
+                k_hidden_states = nn_keys[0]
+            else:
+                k_hidden_states = k_embeddings
+
+            if self.pos_embed is not None:
+                k_indices = torch.arange(self.k).unsqueeze(0).unsqueeze(0).expand_as(nn_vals)
+                k_pos_embeds = self.pos_embed(k_indices)
+                k_hidden_states += k_pos_embeds
+
+            # nn_vals: [batch, seq_len, k]
+            # nn_keys: [batch, seq_len, k, hidden_dim]
+            attn_output = self.knn_attn(
+                model_hidden_states=queries, 
+                k_hidden_states=k_hidden_states, 
+                k_embeddings=k_embeddings
+            )
+
+            knn_lprobs = attn_output.log_softmax(dim=-1)
+
         else:
-            k_hidden_states = k_embeddings
-
-        if self.pos_embed is not None:
-            k_indices = torch.arange(self.k).unsqueeze(0).unsqueeze(0).expand_as(nn_vals)
-            k_pos_embeds = self.pos_embed(k_indices)
-            k_hidden_states += k_pos_embeds
-
-        # nn_vals: [batch, seq_len, k]
-        # nn_keys: [batch, seq_len, k, hidden_dim]
-        attn_output = self.knn_attn(
-            model_hidden_states=queries, 
-            k_hidden_states=k_hidden_states, 
-            k_embeddings=k_embeddings
-        )
-
-        knn_lprobs = attn_output.log_softmax(dim=-1)
+            knn_lprobs = self.dstore.get_knn_scores_per_step(queries, ret_knns=False)
 
         # logits = interp_coeff * attn_output + (1 - interp_coeff) * output.logits
         logits = self.combine_probs(model_lprobs, knn_lprobs, lmbda=interp_coeff)
         
         if 'labels' in kwargs:
             labels = kwargs['labels']
-            loss = F.cross_entropy(logits, labels)
+            loss = F.cross_entropy(logits, labels, ignore_index=-100)
         else:
             loss = output.logits
 

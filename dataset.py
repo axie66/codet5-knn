@@ -70,12 +70,12 @@ def preprocess_batch_concode(batch):
         return pad_sequence(xs)
     return pad_sequence(xs, batch_first=True), pad_sequence(ys, batch_first=True)#, torch.tensor(y_lens)
 
-def read_concode_examples(filename, data_num):
+def read_concode_examples(filename, data_num, no_tqdm):
     """Read examples from filename."""
     examples = []
 
     with open(filename) as f:
-        for idx, line in enumerate(tqdm(f)):
+        for idx, line in enumerate(tqdm(f, disable=no_tqdm)):
             x = json.loads(line)
             examples.append(
                 Example(
@@ -89,19 +89,19 @@ def read_concode_examples(filename, data_num):
                 break
     return examples
 
-def read_csn_examples(filename, data_num):
+def read_csn_examples(filename, data_num, no_tqdm):
     """Read CodeSearchNet summarization examples from filename."""
     examples = []
 
     with open(filename) as f:
-        for idx, line in enumerate(tqdm(f)):
+        for idx, line in enumerate(tqdm(f, disable=no_tqdm)):
             x = json.loads(line)
             examples.append(
                 Example(
                     idx=idx,
-                    source=' '.join(x["docstring_tokens"]),
+                    source=' '.join(x["docstring_tokens"]).replace('\n', ' '),
                     # TODO: not sure if this is ok since it omits whitespaces
-                    target=' '.join(x["code_tokens"]),
+                    target=' '.join(x["code_tokens"]).replace('\n', ' '),
                 )
             )
             idx += 1
@@ -174,9 +174,9 @@ def load_and_cache_data(args, filename, tokenizer, split_tag, only_src=False, is
     cache_fn = '{}/{}.pt'.format(args.cache_path, split_tag + ('_src' if only_src else '') + data_tag)
 
     if args.task == 'concode':
-        examples = read_concode_examples(filename, args.data_num)
+        examples = read_concode_examples(filename, args.data_num, args.no_tqdm)
     elif args.task == 'csn':
-        examples = read_csn_examples(filename, args.data_num)
+        examples = read_csn_examples(filename, args.data_num, args.no_tqdm)
     else:
         raise Exception("Invalid dataset name")
 
@@ -196,7 +196,7 @@ def load_and_cache_data(args, filename, tokenizer, split_tag, only_src=False, is
         else:
             logger.info("Create cache data into %s", cache_fn)
         tuple_examples = [(example, idx, tokenizer, args, split_tag) for idx, example in enumerate(examples)]
-        features = [convert_examples_to_features(ex) for ex in tqdm(tuple_examples, total=len(tuple_examples))]
+        features = [convert_examples_to_features(ex) for ex in tqdm(tuple_examples, total=len(tuple_examples), disable=args.no_tqdm)]
         data = SimpleDataset(features)
         # all_source_ids = torch.tensor([f.source_ids for f in features], dtype=torch.long)
         # if split_tag == 'test' or only_src:
